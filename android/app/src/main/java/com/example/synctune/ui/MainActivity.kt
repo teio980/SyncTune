@@ -1,5 +1,6 @@
 package com.example.synctune.ui
 
+import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -21,9 +22,12 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import androidx.palette.graphics.Palette
 import androidx.work.*
 import com.example.synctune.R
+import com.example.synctune.player.PlaybackService
 import com.example.synctune.player.PlayerManager
 import com.example.synctune.sync.SyncManager
 import com.example.synctune.sync.SyncWorker
@@ -33,6 +37,8 @@ import com.example.synctune.ui.settings.SettingsFragment
 import com.example.synctune.ui.sync.SyncFragment
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.card.MaterialCardView
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 
 class MainActivity : AppCompatActivity() {
 
@@ -44,6 +50,8 @@ class MainActivity : AppCompatActivity() {
     private var miniBtnPlayPause: ImageButton? = null
     private var miniBtnNext: ImageButton? = null
     private var miniBtnPrev: ImageButton? = null
+    
+    private var controllerFuture: ListenableFuture<MediaController>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -65,7 +73,6 @@ class MainActivity : AppCompatActivity() {
         if (savedInstanceState == null) {
             loadFragment(LibraryFragment(), false)
             triggerAutoSync()
-            // 检查是否是从灵动岛跳转进来的
             checkIntentForNavigation(intent)
         }
 
@@ -94,6 +101,23 @@ class MainActivity : AppCompatActivity() {
         updatePlayPauseIcon(player.isPlaying)
     }
 
+    override fun onStart() {
+        super.onStart()
+        // 关键：建立 MediaController 连接，这会让荣耀系统将此应用标记为活跃媒体源
+        val sessionToken = SessionToken(this, ComponentName(this, PlaybackService::class.java))
+        controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
+        controllerFuture?.addListener({
+            // 连接成功后，系统会更稳定地显示胶囊
+        }, MoreExecutors.directExecutor())
+    }
+
+    override fun onStop() {
+        super.onStop()
+        controllerFuture?.let {
+            MediaController.releaseFuture(it)
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -107,7 +131,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openNowPlayingFragment() {
-        // 如果当前已经在播放页，就不重复打开了
         val currentFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
         if (currentFragment is NowPlayingFragment) return
 
