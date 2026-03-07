@@ -1,121 +1,46 @@
 # SyncTune
 
-SyncTune is a cross-platform music player designed to keep your local music library synchronized across devices.
+Personal, modular music player with cloud-ready sync — no central server.
 
-It automatically syncs MP3 files with cloud storage, allowing you to maintain a consistent music library between Android and Windows without relying on a centralized server.
-
-The system is built with a modular architecture that supports multiple storage providers. Currently, Google Drive synchronization is implemented, with NAS (WebDAV) planned for future releases.
+SyncTune focuses on local MP3 playback and a clean library model while preparing the path for cloud synchronization via storage adapters (Google Drive first, NAS/WebDAV next). Android is implemented; Windows is planned.
 
 ---
 
 ## ✨ Features
 
-* 🎵 Local MP3 music player
-* 🔄 Automatic cloud synchronization
-* ☁️ Google Drive integration
-* 📱 Android + Windows support
-* 🧩 Modular storage provider architecture
-* 🔍 Automatic music library scanning
-* 🗂 ID3 metadata parsing (title, artist, album)
-* 📦 SQLite-based music library database
-* ⚡ Hash-based duplicate detection (MD5)
+Implemented
+- Local MP3 playback (ExoPlayer): play/pause/seek/next/previous
+- Playlist support; shuffle/loop via Player controls
+- Library scan for Music directory; ID3 metadata parsing (title, artist, album)
+- SQLite library with fields: id, title, artist, album, file_path, file_hash (MD5), modified_time
+- MD5-based dedupe; repeat scans do not insert duplicates
+- DB cleanup for locally removed files (library stays consistent)
+- Sync Settings page:
+  - Enable Cloud Sync toggle (persisted) [link](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/app/src/main/java/com/example/synctune/sync/SyncManager.kt)
+  - Local directory picker via SAF (persisted) [link](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/app/src/main/java/com/example/synctune/ui/settings/SettingsFragment.kt)
+  - Google Drive “Developer Mode” credentials input (Client ID/Secret/Refresh Token) [link](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/app/src/main/res/layout/fragment_settings.xml)
+
+Coming Soon
+- In-app OAuth login for Google Drive (no manual credentials)
+- Background sync (WorkManager): upload/download reconciliation
+- Cloud deletion linkage when local files are removed
+- Conflict resolution UI (filename vs MD5) and user choices
+- NAS/WebDAV adapter, Windows client (Electron + React)
 
 ---
 
-## 🚀 How It Works
+## 🚀 Getting Started (Android)
 
-SyncTune keeps your music library consistent across devices.
+Requirements
+- Android Studio, SDK 34
+- Gradle 8.2; JDK 17 compatible
 
-Synchronization rules:
+Open & Run
+- Open folder: `SyncTune/android`
+- Let Gradle sync dependencies
+- Run on emulator/device
 
-| Situation                            | Action   |
-| ------------------------------------ | -------- |
-| Local file exists but cloud does not | Upload   |
-| Cloud file exists but local does not | Download |
-| Both exist                           | Skip     |
-
-The system compares files using **MD5 hash values** to avoid duplicates.
-
-Example sync flow:
-
-Local Scan → Cloud File List → Compare Hash → Upload / Download
-
----
-
-## 🏗 Architecture Overview
-
-The application is composed of several core modules:
-
-Music Player
-Handles playback functionality including play, pause, seek, playlist, shuffle, and repeat.
-
-Library Manager
-Scans the local music folder and extracts metadata from MP3 files.
-
-Sync Engine
-Responsible for synchronization logic between local storage and cloud providers.
-
-Storage Adapter
-Provides a unified interface for different storage providers.
-
-```
-Music Player
-      │
-Library Manager
-      │
-   Sync Engine
-      │
- Storage Adapter
-      │
- Google Drive
-```
-
-The architecture allows additional storage providers to be added without modifying the core system.
-
----
-
-## ☁️ Storage Providers
-
-Current provider:
-
-* Google Drive
-
-Planned providers:
-
-* NAS (WebDAV)
-* OneDrive
-* Dropbox
-
-Storage providers are implemented using an **Adapter Pattern**.
-
-Example interface:
-
-```
-StorageAdapter
- ├── listFiles()
- ├── uploadFile()
- ├── downloadFile()
- └── deleteFile()
-```
-
----
-
-## 📱 Platforms
-
-SyncTune supports multiple platforms.
-
-### Android
-
-Technology stack:
-
-* Kotlin
-* MVVM architecture
-* ExoPlayer for audio playback
-* WorkManager for background synchronization
-* SQLite for local music library
-
-App modules:
-
+Key modules
 ```
 app
  ├── ui
@@ -125,53 +50,70 @@ app
  └── storage
 ```
 
-Synchronization runs periodically in the background.
+References
+- Player manager: [PlayerManager.kt](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/app/src/main/java/com/example/synctune/player/PlayerManager.kt)
+- Library & scan: [LibraryFragment.kt](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/app/src/main/java/com/example/synctune/ui/library/LibraryFragment.kt)
+- Metadata reader: [MetadataReader.kt](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/app/src/main/java/com/example/synctune/library/MetadataReader.kt)
+- SQLite schema & DAO: [schema.sql](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/schema.sql), [SongDao.kt](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/app/src/main/java/com/example/synctune/library/SongDao.kt)
+- Settings: [SettingsFragment.kt](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/app/src/main/java/com/example/synctune/ui/settings/SettingsFragment.kt)
 
 ---
 
-### Windows
+## ⚙️ Sync Settings
 
-Planned desktop implementation.
+Cloud Sync toggle
+- Enable/Disable sync state stored via SharedPreferences [link](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/app/src/main/java/com/example/synctune/sync/SyncManager.kt)
 
-Recommended stack:
+Local library directory
+- Choose with Storage Access Framework (persisted URI) [link](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/app/src/main/java/com/example/synctune/ui/settings/SettingsFragment.kt)
 
-Option A:
-Electron + React
+Google Drive (Developer Mode)
+- Manual input of Client ID / Client Secret / Refresh Token
+- Saved via SyncManager getters/setters
+- Drive client wiring stub: [GoogleDriveAdapter.kt](file:///c:/Users/Owner/Documents/teiocode/SyncTune/android/app/src/main/java/com/example/synctune/storage/GoogleDriveAdapter.kt)
 
-Option B:
-Python + Qt
+OAuth Login (coming soon)
+- App-led OAuth flow to obtain and refresh tokens without manual entry
 
-Modules:
+---
 
+## � Sync Rules (design)
+
+Comparison basis
+- MD5 file hash ensures dedupe and accurate matching
+
+Intended actions
+| Situation                            | Action   |
+| ------------------------------------ | -------- |
+| Local file exists, cloud missing     | Upload   |
+| Cloud file exists, local missing     | Download |
+| Local delete                         | Delete on cloud (coming soon) |
+| Both exist                           | Skip/Update metadata |
+
+Flow (planned)
 ```
-player
-library
-sync
-storage
+Scan local → List cloud → Compare by MD5
+Upload missing → Download missing → Delete cloud for local removals
 ```
 
 ---
 
-## 📂 Music Folder Structure
+## 📂 Folder Structure & Metadata
 
-SyncTune scans a local music folder such as:
-
+Default layout scanned
 ```
 Music/
-    Artist/
-        Song.mp3
+  Artist/
+    Song.mp3
 ```
 
-Metadata such as **title, artist, and album** are extracted from ID3 tags.
+ID3 parse for title/artist/album. Missing title falls back to filename.
 
 ---
 
-## 🗄 Database Schema
+## 🗄 Database Model
 
-Local music metadata is stored using SQLite.
-
-Songs table:
-
+Songs table fields
 ```
 id
 title
@@ -182,91 +124,44 @@ file_hash
 modified_time
 ```
 
-The `file_hash` field is used for synchronization comparison.
+`file_hash` drives sync and dedupe.
 
 ---
 
-## 🔄 Synchronization Algorithm
+## 🏗 Architecture
 
-Simplified logic:
-
+Modular design
 ```
-localSongs = scanLocal()
-
-cloudSongs = listCloud()
-
-for song in localSongs:
-    if song.hash not in cloudSongs:
-        upload(song)
-
-for song in cloudSongs:
-    if song.hash not in localSongs:
-        download(song)
+UI
+Library
+Player
+Sync
+Storage Adapter (Google Drive, WebDAV next)
 ```
 
-This ensures both devices maintain identical music libraries.
+Adapter pattern allows adding providers without changing core.
 
 ---
 
-## ⚙️ Sync Settings UI
+## � Windows (planned)
 
-Users can choose their synchronization provider from the app interface.
+Electron + React preferred, Python + Qt optional.
 
-Example:
-
-```
-Sync Settings
-
-Provider:
-[ Google Drive ▼ ]
-
-Status:
-Connected
-
-[ Sync Now ]
-```
-
-The UI is designed to allow additional providers in the future.
-
----
-
-## 📌 Project Goals
-
-SyncTune aims to provide:
-
-* A simple personal music synchronization system
-* Full control over your music files
-* No dependency on streaming services
-* Cross-device music library consistency
+Modules mirror Android: player, library, sync, storage.
 
 ---
 
 ## 🛣 Roadmap
 
-Planned features:
-
-* NAS (WebDAV) support
-* Lyrics support
-* Album artwork fetching
-* Playback progress synchronization
-* Playlist cloud sync
-* Multi-device conflict handling
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome.
-
-Possible contribution areas:
-
-* Desktop client implementation
-* Additional cloud storage adapters
-* UI improvements
-* Performance optimization
+- Google Drive OAuth login (no manual credentials)
+- Background sync & scheduling (WorkManager)
+- Cloud deletion linkage on local removal
+- Conflict resolution UI, merge strategies
+- NAS/WebDAV storage adapter
+- Windows client
 
 ---
 
 ## 📄 License
 
-This project is open source and intended for personal music library synchronization.
+Open source, intended for personal music library synchronization.

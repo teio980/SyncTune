@@ -1,0 +1,122 @@
+[
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\layout_layout_mini_player.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\layout\\layout_mini_player.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\layout_fragment_home.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\layout\\fragment_home.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_skip_next.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_skip_next.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\layout_fragment_now_playing.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\layout\\fragment_now_playing.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\anim_no_anim.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\anim\\no_anim.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_repeat_one.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_repeat_one.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_chevron_down.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_chevron_down.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\layout_fragment_settings.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\layout\\fragment_settings.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\menu_bottom_nav_menu.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\menu\\bottom_nav_menu.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\anim_layout_animation_fall_down.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\anim\\layout_animation_fall_down.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\anim_item_animation_fall_down.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\anim\\item_animation_fall_down.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_heart.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_heart.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_repeat.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_repeat.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_custom_seekbar_progress.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\custom_seekbar_progress.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\anim_slide_up.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\anim\\slide_up.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_skip_previous.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_skip_previous.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\anim_slide_down.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\anim\\slide_down.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/layout_fragment_library.xml.flat",
+        "source": "com.example.synctune.app-main-51:/layout/fragment_library.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_play.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_play.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_custom_seekbar_thumb.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\custom_seekbar_thumb.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_pause.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_pause.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_default_album_art.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\default_album_art.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\layout_item_song.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\layout\\item_song.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\color_nav_item_color.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\color\\nav_item_color.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_shuffle.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_shuffle.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_music_note.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_music_note.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\anim_btn_click.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\anim\\btn_click.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\layout_fragment_sync.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\layout\\fragment_sync.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\layout_activity_main.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\layout\\activity_main.xml"
+    },
+    {
+        "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\layout_fragment_library.xml.flat",
+        "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\layout\\fragment_library.xml"
+    }
+]

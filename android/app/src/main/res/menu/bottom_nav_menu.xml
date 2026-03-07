@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/navigation_library"
+        android:icon="@android:drawable/ic_menu_agenda"
+        android:title="@string/title_library" />
+    <item
+        android:id="@+id/navigation_sync"
+        android:icon="@android:drawable/stat_notify_sync"
+        android:title="@string/title_sync" />
+    <item
+        android:id="@+id/navigation_settings"
+        android:icon="@android:drawable/ic_menu_preferences"
+        android:title="@string/title_settings" />
+</menu>
