@@ -4,6 +4,8 @@ Personal, modular music player with cloud-ready sync — no central server.
 
 SyncTune focuses on local MP3 playback and a clean library model while preparing the path for cloud synchronization via storage adapters (Google Drive first, NAS/WebDAV next). Android is implemented; Windows is planned.
 
+User Manual: [docs/UserManual.md](file:///c:/Users/Owner/Documents/teiocode/SyncTune/docs/UserManual.md)
+
 ---
 
 ## ✨ Features

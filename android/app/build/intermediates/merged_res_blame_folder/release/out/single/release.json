@@ -1,0 +1,118 @@
+[
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_pause.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_pause.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/menu_bottom_nav_menu.xml.flat",
+        "source": "com.example.synctune.app-main-50:/menu/bottom_nav_menu.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/layout_fragment_home.xml.flat",
+        "source": "com.example.synctune.app-main-50:/layout/fragment_home.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/anim_slide_up.xml.flat",
+        "source": "com.example.synctune.app-main-50:/anim/slide_up.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_heart.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_heart.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/anim_no_anim.xml.flat",
+        "source": "com.example.synctune.app-main-50:/anim/no_anim.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/anim_slide_down.xml.flat",
+        "source": "com.example.synctune.app-main-50:/anim/slide_down.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_custom_seekbar_thumb.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/custom_seekbar_thumb.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_music_note.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_music_note.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_skip_next.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_skip_next.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/layout_activity_main.xml.flat",
+        "source": "com.example.synctune.app-main-50:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/layout_fragment_now_playing.xml.flat",
+        "source": "com.example.synctune.app-main-50:/layout/fragment_now_playing.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_skip_previous.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_skip_previous.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_default_album_art.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/default_album_art.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/layout_fragment_sync.xml.flat",
+        "source": "com.example.synctune.app-main-50:/layout/fragment_sync.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/layout_item_song.xml.flat",
+        "source": "com.example.synctune.app-main-50:/layout/item_song.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/anim_item_animation_fall_down.xml.flat",
+        "source": "com.example.synctune.app-main-50:/anim/item_animation_fall_down.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/layout_fragment_library.xml.flat",
+        "source": "com.example.synctune.app-main-50:/layout/fragment_library.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/color_nav_item_color.xml.flat",
+        "source": "com.example.synctune.app-main-50:/color/nav_item_color.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_repeat_one.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_repeat_one.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/anim_layout_animation_fall_down.xml.flat",
+        "source": "com.example.synctune.app-main-50:/anim/layout_animation_fall_down.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_play.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_play.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_shuffle.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_shuffle.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/anim_btn_click.xml.flat",
+        "source": "com.example.synctune.app-main-50:/anim/btn_click.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_repeat.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_repeat.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_chevron_down.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_chevron_down.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_custom_seekbar_progress.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/custom_seekbar_progress.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/layout_fragment_settings.xml.flat",
+        "source": "com.example.synctune.app-main-50:/layout/fragment_settings.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/layout_layout_mini_player.xml.flat",
+        "source": "com.example.synctune.app-main-50:/layout/layout_mini_player.xml"
+    }
+]
