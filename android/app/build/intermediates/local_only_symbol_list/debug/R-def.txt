@@ -19,6 +19,9 @@ drawable custom_seekbar_thumb
 drawable default_album_art
 drawable ic_chevron_down
 drawable ic_heart
+drawable ic_launcher
+drawable ic_launcher_background
+drawable ic_launcher_foreground
 drawable ic_music_note
 drawable ic_pause
 drawable ic_play
@@ -42,6 +45,7 @@ id btn_repeat
 id btn_save_config
 id btn_scan_container
 id btn_scan_text
+id btn_search
 id btn_shuffle
 id btn_sort
 id btn_test_connection
@@ -55,6 +59,7 @@ id card_scan
 id card_status
 id card_webdav
 id cb_song_select
+id et_search
 id et_webdav_pass
 id et_webdav_url
 id et_webdav_user
@@ -86,6 +91,7 @@ id rl_header
 id rv_songs
 id switch_auto_sync
 id tab_layout_library
+id til_search
 id tv_cloud_count
 id tv_connection_status
 id tv_current_path
@@ -143,6 +149,7 @@ string path_not_set
 string path_set
 string scan_complete
 string scan_local_songs
+string search_hint
 string server_url
 string status_connected
 string status_disconnected

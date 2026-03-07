@@ -45,10 +45,10 @@ class SettingsFragment : Fragment() {
                     uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
-                
+
                 val prefs = requireActivity().getSharedPreferences("SyncTunePrefs", Context.MODE_PRIVATE)
                 prefs.edit().putString("music_directory_uri", uri.toString()).apply()
-                
+
                 updatePathDisplay(uri.toString())
                 Toast.makeText(requireContext(), "目录已更新", Toast.LENGTH_SHORT).show()
             }

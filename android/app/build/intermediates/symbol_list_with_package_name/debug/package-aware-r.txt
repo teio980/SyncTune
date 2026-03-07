@@ -2897,6 +2897,9 @@ drawable ic_clear_black_24
 drawable ic_clock_black_24dp
 drawable ic_heart
 drawable ic_keyboard_black_24dp
+drawable ic_launcher
+drawable ic_launcher_background
+drawable ic_launcher_foreground
 drawable ic_m3_chip_check
 drawable ic_m3_chip_checked_circle
 drawable ic_m3_chip_close
@@ -3111,6 +3114,7 @@ id btn_repeat
 id btn_save_config
 id btn_scan_container
 id btn_scan_text
+id btn_search
 id btn_shuffle
 id btn_sort
 id btn_test_connection
@@ -3205,6 +3209,7 @@ id endToStart
 id end_padder
 id enterAlways
 id enterAlwaysCollapsed
+id et_search
 id et_webdav_pass
 id et_webdav_url
 id et_webdav_user
@@ -3575,6 +3580,7 @@ id textinput_placeholder
 id textinput_prefix_text
 id textinput_suffix_text
 id texture_view
+id til_search
 id time
 id title
 id titleDividerNoCustom
@@ -4089,6 +4095,7 @@ string path_password_strike_through
 string path_set
 string scan_complete
 string scan_local_songs
+string search_hint
 string search_menu_title
 string searchbar_scrolling_view_behavior
 string searchview_clear_text_content_description

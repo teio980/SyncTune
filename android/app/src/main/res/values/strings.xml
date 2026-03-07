@@ -61,4 +61,5 @@
     <string name="btn_delete_cloud">Delete Cloud</string>
     <string name="btn_keep_cloud">Keep Cloud</string>
     <string name="scan_complete">Scan Complete</string>
+    <string name="search_hint">Search songs...</string>
 </resources>

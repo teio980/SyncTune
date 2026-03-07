@@ -3,6 +3,8 @@ package com.example.synctune.ui.library
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -27,6 +29,8 @@ import com.example.synctune.sync.SyncManager
 import com.example.synctune.sync.WebDAVHelper
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.tabs.TabLayout
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,6 +48,7 @@ class LibraryFragment : Fragment() {
     
     private enum class SortOrder { NAME, ARTIST, DATE }
     private var currentSortOrder = SortOrder.NAME
+    private var searchQuery: String = ""
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -60,7 +65,10 @@ class LibraryFragment : Fragment() {
         val btnDeleteSelected = view.findViewById<ImageButton>(R.id.btn_delete_selected)
         val btnCancelSelection = view.findViewById<ImageButton>(R.id.btn_cancel_selection)
         val btnSort = view.findViewById<ImageButton>(R.id.btn_sort)
+        val btnSearch = view.findViewById<ImageButton>(R.id.btn_search)
         val tabLayout = view.findViewById<TabLayout>(R.id.tab_layout_library)
+        val tilSearch = view.findViewById<TextInputLayout>(R.id.til_search)
+        val etSearch = view.findViewById<TextInputEditText>(R.id.et_search)
 
         songAdapter = SongAdapter(emptyList(), { song ->
             val allSongs = songAdapter.getSongs()
@@ -76,10 +84,14 @@ class LibraryFragment : Fragment() {
                 tvSelectionCount.visibility = View.VISIBLE
                 btnDeleteSelected.visibility = View.VISIBLE
                 btnCancelSelection.visibility = View.VISIBLE
+                btnSearch.visibility = View.GONE
+                btnSort.visibility = View.GONE
             } else {
                 tvSelectionCount.visibility = View.GONE
                 btnDeleteSelected.visibility = View.GONE
                 btnCancelSelection.visibility = View.GONE
+                btnSearch.visibility = View.VISIBLE
+                btnSort.visibility = View.VISIBLE
                 songAdapter.setSelectionMode(false)
             }
         })
@@ -110,6 +122,27 @@ class LibraryFragment : Fragment() {
         btnSort.setOnClickListener {
             showSortMenu(it)
         }
+
+        btnSearch.setOnClickListener {
+            if (tilSearch.visibility == View.GONE) {
+                tilSearch.visibility = View.VISIBLE
+                etSearch.requestFocus()
+            } else {
+                tilSearch.visibility = View.GONE
+                etSearch.text?.clear()
+                searchQuery = ""
+                loadSongs()
+            }
+        }
+
+        etSearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                searchQuery = s?.toString() ?: ""
+                loadSongs()
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
 
         setupPlayerListener()
         loadSongs()
@@ -261,6 +294,14 @@ class LibraryFragment : Fragment() {
         lifecycleScope.launch(Dispatchers.IO) {
             var songs = if (currentTab == 0) songDao.getAllSongs() else songDao.getFavouriteSongs()
             
+            if (searchQuery.isNotEmpty()) {
+                songs = songs.filter { 
+                    it.title.contains(searchQuery, ignoreCase = true) || 
+                    it.artist.contains(searchQuery, ignoreCase = true) ||
+                    it.album.contains(searchQuery, ignoreCase = true)
+                }
+            }
+
             songs = when (currentSortOrder) {
                 SortOrder.NAME -> songs.sortedBy { it.title.lowercase() }
                 SortOrder.ARTIST -> songs.sortedBy { it.artist.lowercase() }

@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -58,9 +59,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.fragment_container)) { v, insets ->
+        // 移除 R.id.fragment_container 的 paddingTop，改由各个 Fragment 内部处理，
+        // 或者如果需要全局处理，确保背景色统一。这里为了消除黑边，
+        // 我们将沉浸式边距应用在根布局或确保背景色一致。
+        val rootLayout = findViewById<View>(R.id.fragment_container).parent as View
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, 0)
+            // 仅对底部导航栏应用底部边距，顶部边距根据需要处理
+            navView.updatePadding(bottom = systemBars.bottom)
             insets
         }
 
@@ -103,11 +109,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        // 关键：建立 MediaController 连接，这会让荣耀系统将此应用标记为活跃媒体源
         val sessionToken = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
         controllerFuture?.addListener({
-            // 连接成功后，系统会更稳定地显示胶囊
         }, MoreExecutors.directExecutor())
     }
 

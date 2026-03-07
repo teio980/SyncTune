@@ -1,9 +1,9 @@
 -- Merging decision tree log ---
 manifest
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-50:12
-INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-50:12
-INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-50:12
-INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-50:12
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-53:12
+INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-53:12
+INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-53:12
+INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-53:12
 MERGED from [androidx.fragment:fragment-ktx:1.5.7] C:\Users\Owner\.gradle\caches\transforms-3\ba1ddbeefad941eede5292b497687aba\transformed\fragment-ktx-1.5.7\AndroidManifest.xml:17:1-24:12
 MERGED from [com.google.android.material:material:1.8.0] C:\Users\Owner\.gradle\caches\transforms-3\dc2c30a11c291dd7e091bf3666772e9b\transformed\material-1.8.0\AndroidManifest.xml:17:1-26:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.1.4] C:\Users\Owner\.gradle\caches\transforms-3\5a3d8f1450f9a1a04e1bdd38bbf63c11\transformed\constraintlayout-2.1.4\AndroidManifest.xml:2:1-11:12
@@ -124,8 +124,8 @@ ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\Andro
 	android:name
 		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:12:22-74
 application
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:14:5-48:19
-INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:14:5-48:19
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:14:5-51:19
+INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:14:5-51:19
 MERGED from [com.google.android.material:material:1.8.0] C:\Users\Owner\.gradle\caches\transforms-3\dc2c30a11c291dd7e091bf3666772e9b\transformed\material-1.8.0\AndroidManifest.xml:24:5-20
 MERGED from [com.google.android.material:material:1.8.0] C:\Users\Owner\.gradle\caches\transforms-3\dc2c30a11c291dd7e091bf3666772e9b\transformed\material-1.8.0\AndroidManifest.xml:24:5-20
 MERGED from [androidx.constraintlayout:constraintlayout:2.1.4] C:\Users\Owner\.gradle\caches\transforms-3\5a3d8f1450f9a1a04e1bdd38bbf63c11\transformed\constraintlayout-2.1.4\AndroidManifest.xml:9:5-20
@@ -155,27 +155,31 @@ MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\Owner\.gradle\cach
 	android:appComponentFactory
 		ADDED from [androidx.core:core:1.9.0] C:\Users\Owner\.gradle\caches\transforms-3\1be2f7b99c4696fd5ad9974aa4b3206b\transformed\core-1.9.0\AndroidManifest.xml:28:18-86
 	android:supportsRtl
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:17:9-35
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:19:9-35
 	android:label
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:16:9-41
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:18:9-41
+	android:roundIcon
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:17:9-50
 	tools:targetApi
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:20:9-29
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:22:9-29
+	android:icon
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:16:9-45
 	android:allowBackup
 		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:15:9-35
 	android:theme
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:18:9-46
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:20:9-46
 	android:enableOnBackInvokedCallback
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:19:9-51
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:21:9-51
 service#androidx.work.impl.foreground.SystemForegroundService
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:22:9-26:34
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:24:9-28:34
 MERGED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:53:9-59:35
 MERGED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:53:9-59:35
 	android:enabled
 		ADDED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:56:13-77
 	tools:node
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:26:13-31
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:28:13-31
 	android:exported
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:24:13-37
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:26:13-37
 	tools:ignore
 		ADDED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:58:13-60
 	tools:targetApi
@@ -183,47 +187,49 @@ MERGED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\tra
 	android:directBootAware
 		ADDED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:55:13-44
 	android:foregroundServiceType
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:25:13-53
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:27:13-53
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:23:13-81
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:25:13-81
 service#com.example.synctune.player.PlaybackService
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:28:9-37:19
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:30:9-39:19
 	android:exported
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:30:13-36
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:32:13-36
 	tools:ignore
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:32:13-43
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:34:13-43
 	android:foregroundServiceType
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:31:13-58
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:33:13-58
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:29:13-51
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:31:13-51
 intent-filter#action:name:android.intent.action.MEDIA_BUTTON+action:name:androidx.media3.session.MediaSessionService
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:33:13-36:29
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:35:13-38:29
 action#androidx.media3.session.MediaSessionService
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:34:17-86
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:36:17-86
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:34:25-83
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:36:25-83
 action#android.intent.action.MEDIA_BUTTON
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:35:17-77
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:37:17-77
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:35:25-74
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:37:25-74
 activity#com.example.synctune.ui.MainActivity
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:39:9-47:20
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:41:9-50:20
+	android:label
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:44:13-45
 	android:launchMode
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:42:13-43
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:45:13-43
 	android:exported
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:41:13-36
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:43:13-36
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:40:13-44
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:42:13-44
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:43:13-46:29
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:46:13-49:29
 action#android.intent.action.MAIN
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:44:17-69
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:47:17-69
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:44:25-66
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:47:25-66
 category#android.intent.category.LAUNCHER
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:45:17-77
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:48:17-77
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:45:27-74
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:48:27-74
 uses-sdk
 INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml
