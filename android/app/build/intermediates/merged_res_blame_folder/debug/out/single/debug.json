@@ -56,6 +56,10 @@
         "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_heart.xml"
     },
     {
+        "merged": "com.example.synctune.app-merged_res-49:/layout_fragment_now_playing.xml.flat",
+        "source": "com.example.synctune.app-main-51:/layout/fragment_now_playing.xml"
+    },
+    {
         "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_launcher_foreground.xml.flat",
         "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_launcher_foreground.xml"
     },
@@ -76,20 +80,12 @@
         "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_launcher.xml"
     },
     {
-        "merged": "com.example.synctune.app-merged_res-49:/layout_fragment_sync.xml.flat",
-        "source": "com.example.synctune.app-main-51:/layout/fragment_sync.xml"
-    },
-    {
         "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_skip_previous.xml.flat",
         "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\drawable\\ic_skip_previous.xml"
     },
     {
         "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\anim_slide_down.xml.flat",
         "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\anim\\slide_down.xml"
-    },
-    {
-        "merged": "com.example.synctune.app-merged_res-49:/layout_fragment_library.xml.flat",
-        "source": "com.example.synctune.app-main-51:/layout/fragment_library.xml"
     },
     {
         "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\drawable_ic_play.xml.flat",
@@ -138,9 +134,5 @@
     {
         "merged": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-merged_res-49:\\layout_fragment_library.xml.flat",
         "source": "C:\\Users\\Owner\\.gradle\\daemon\\8.2\\com.example.synctune.app-main-51:\\layout\\fragment_library.xml"
-    },
-    {
-        "merged": "com.example.synctune.app-merged_res-49:/layout_fragment_settings.xml.flat",
-        "source": "com.example.synctune.app-main-51:/layout/fragment_settings.xml"
     }
 ]

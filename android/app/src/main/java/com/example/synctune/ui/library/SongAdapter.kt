@@ -17,6 +17,7 @@ import com.bumptech.glide.Glide
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 import com.example.synctune.R
 import com.example.synctune.library.Song
+import kotlinx.coroutines.*
 
 class SongAdapter(
     private var songs: List<Song>,
@@ -29,6 +30,9 @@ class SongAdapter(
     private var playingSongPath: String? = null
     private var isSelectionMode = false
     private val selectedSongs = mutableSetOf<Song>()
+    
+    // 用于在 Adapter 内部进行异步处理
+    private val adapterScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     class SongViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val title: TextView = view.findViewById(R.id.tv_song_title)
@@ -37,7 +41,10 @@ class SongAdapter(
         val playingIndicator: ImageView = view.findViewById(R.id.iv_playing_indicator)
         val checkBox: CheckBox = view.findViewById(R.id.cb_song_select)
         val btnFavourite: ImageButton = view.findViewById(R.id.btn_favourite)
+        var thumbnailJob: Job? = null
     }
+
+    fun isSelectionModeEnabled(): Boolean = isSelectionMode
 
     fun setSelectionMode(enabled: Boolean) {
         if (isSelectionMode != enabled) {
@@ -93,12 +100,23 @@ class SongAdapter(
             onFavouriteClick(song)
         }
 
-        Glide.with(holder.itemView.context)
-            .load(getAlbumArt(holder.itemView.context, song.filePath))
-            .placeholder(R.drawable.default_album_art)
-            .error(R.drawable.default_album_art)
-            .transition(DrawableTransitionOptions.withCrossFade())
-            .into(holder.albumArt)
+        // 核心修复：1:1 封面提取放在 IO 线程执行，不阻塞 UI 线程，彻底解决滑动卡顿
+        holder.thumbnailJob?.cancel()
+        holder.albumArt.setImageResource(R.drawable.default_album_art)
+        
+        holder.thumbnailJob = adapterScope.launch {
+            val artData = withContext(Dispatchers.IO) {
+                getAlbumArt(holder.itemView.context, song.filePath)
+            }
+            if (isActive) {
+                Glide.with(holder.itemView.context)
+                    .load(artData)
+                    .placeholder(R.drawable.default_album_art)
+                    .error(R.drawable.default_album_art)
+                    .transition(DrawableTransitionOptions.withCrossFade())
+                    .into(holder.albumArt)
+            }
+        }
 
         holder.itemView.setOnClickListener {
             if (isSelectionMode) {
@@ -153,5 +171,9 @@ class SongAdapter(
     fun updateSongs(newSongs: List<Song>) {
         songs = newSongs
         notifyDataSetChanged()
+    }
+    
+    fun clear() {
+        adapterScope.cancel()
     }
 }

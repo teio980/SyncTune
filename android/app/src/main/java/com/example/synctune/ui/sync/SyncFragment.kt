@@ -15,6 +15,7 @@ import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
 import androidx.work.*
 import com.example.synctune.R
+import com.example.synctune.sync.AudioFileValidator
 import com.example.synctune.sync.SyncManager
 import com.example.synctune.sync.SyncWorker
 import com.example.synctune.sync.WebDAVHelper
@@ -102,7 +103,7 @@ class SyncFragment : Fragment() {
         }
 
         lifecycleScope.launch(Dispatchers.IO) {
-            val localFiles = getLocalMp3Files()
+            val localFiles = getLocalAudioFiles()
             val remoteFilesResult = webDAVHelper?.listRemoteFiles()
             
             withContext(Dispatchers.Main) {
@@ -174,7 +175,7 @@ class SyncFragment : Fragment() {
         Toast.makeText(requireContext(), "Background sync started", Toast.LENGTH_SHORT).show()
     }
 
-    private fun getLocalMp3Files(): List<DocumentFile> {
+    private fun getLocalAudioFiles(): List<DocumentFile> {
         val prefs = requireActivity().getSharedPreferences("SyncTunePrefs", Context.MODE_PRIVATE)
         val savedUriString = prefs.getString("music_directory_uri", null) ?: return emptyList()
         val rootDoc = DocumentFile.fromTreeUri(requireContext(), Uri.parse(savedUriString)) ?: return emptyList()
@@ -183,7 +184,7 @@ class SyncFragment : Fragment() {
         fun scan(dir: DocumentFile) {
             dir.listFiles().forEach { file ->
                 if (file.isDirectory) scan(file)
-                else if (file.name?.endsWith(".mp3", true) == true) result.add(file)
+                else if (AudioFileValidator.isAudioFile(file.name)) result.add(file)
             }
         }
         scan(rootDoc)

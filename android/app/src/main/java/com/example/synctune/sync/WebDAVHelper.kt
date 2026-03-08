@@ -32,7 +32,7 @@ class WebDAVHelper(private val url: String, user: String, pass: String) {
             val resources = sardine.list(url)
             // The first resource is the directory itself
             val files = resources.drop(1)
-                .filter { !it.isDirectory && it.name.endsWith(".mp3", ignoreCase = true) }
+                .filter { !it.isDirectory && AudioFileValidator.isAudioFile(it.name) }
                 .map { WebDAVFile(it.name, it.contentLength, it.path) }
             Result.success(files)
         } catch (e: Exception) {
@@ -56,7 +56,8 @@ class WebDAVHelper(private val url: String, user: String, pass: String) {
             val remoteUrl = if (url.endsWith("/")) url + localFile.name else "$url/${localFile.name}"
             context.contentResolver.openInputStream(localFile.uri)?.use { input ->
                 val bytes = input.readBytes()
-                sardine.put(remoteUrl, bytes, "audio/mpeg")
+                val mimeType = AudioFileValidator.getMimeType(localFile.name)
+                sardine.put(remoteUrl, bytes, mimeType)
             }
             Result.success(Unit)
         } catch (e: Exception) {
@@ -67,7 +68,8 @@ class WebDAVHelper(private val url: String, user: String, pass: String) {
     suspend fun downloadFile(context: Context, remoteFileName: String, targetDir: DocumentFile): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val remoteUrl = if (url.endsWith("/")) url + remoteFileName else "$url/$remoteFileName"
-            val localFile = targetDir.createFile("audio/mpeg", remoteFileName)
+            val mimeType = AudioFileValidator.getMimeType(remoteFileName)
+            val localFile = targetDir.createFile(mimeType, remoteFileName)
                 ?: return@withContext Result.failure(Exception("Failed to create local file"))
 
             sardine.get(remoteUrl).use { input ->

@@ -40,7 +40,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         }
 
         return try {
-            val localFiles = getLocalMp3Files(musicDir)
+            val localFiles = getLocalAudioFiles(musicDir)
             val remoteFilesResult = webDAVHelper.listRemoteFiles()
             
             if (remoteFilesResult.isSuccess) {
@@ -136,12 +136,12 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         }
     }
 
-    private fun getLocalMp3Files(rootDoc: DocumentFile): List<DocumentFile> {
+    private fun getLocalAudioFiles(rootDoc: DocumentFile): List<DocumentFile> {
         val result = mutableListOf<DocumentFile>()
         fun scan(dir: DocumentFile) {
             dir.listFiles().forEach { file ->
                 if (file.isDirectory) scan(file)
-                else if (file.name?.endsWith(".mp3", true) == true) result.add(file)
+                else if (AudioFileValidator.isAudioFile(file.name)) result.add(file)
             }
         }
         scan(rootDoc)

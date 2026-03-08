@@ -40,6 +40,7 @@ id btn_download
 id btn_favourite
 id btn_next
 id btn_play_pause
+id btn_player_favourite
 id btn_prev
 id btn_repeat
 id btn_save_config

@@ -11,6 +11,7 @@ import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.PopupMenu
 import androidx.documentfile.provider.DocumentFile
@@ -25,6 +26,7 @@ import com.example.synctune.library.MetadataReader
 import com.example.synctune.library.Song
 import com.example.synctune.library.SongDao
 import com.example.synctune.player.PlayerManager
+import com.example.synctune.sync.AudioFileValidator
 import com.example.synctune.sync.SyncManager
 import com.example.synctune.sync.WebDAVHelper
 import com.google.android.material.card.MaterialCardView
@@ -50,6 +52,8 @@ class LibraryFragment : Fragment() {
     private var currentSortOrder = SortOrder.NAME
     private var searchQuery: String = ""
 
+    private var backPressedCallback: OnBackPressedCallback? = null
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
@@ -70,6 +74,16 @@ class LibraryFragment : Fragment() {
         val tilSearch = view.findViewById<TextInputLayout>(R.id.til_search)
         val etSearch = view.findViewById<TextInputEditText>(R.id.et_search)
 
+        // 初始化返回键监听
+        backPressedCallback = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                if (songAdapter.isSelectionModeEnabled()) {
+                    songAdapter.setSelectionMode(false)
+                }
+            }
+        }
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backPressedCallback!!)
+
         songAdapter = SongAdapter(emptyList(), { song ->
             val allSongs = songAdapter.getSongs()
             val startIndex = allSongs.indexOf(song)
@@ -79,9 +93,12 @@ class LibraryFragment : Fragment() {
         }, { song ->
             toggleFavourite(song)
         }, { count ->
-            if (count > 0) {
-                tvSelectionCount.text = "Selected: $count items"
-                tvSelectionCount.visibility = View.VISIBLE
+            val isSelectionMode = count > 0 || songAdapter.isSelectionModeEnabled()
+            backPressedCallback?.isEnabled = isSelectionMode
+            
+            if (isSelectionMode) {
+                // 不显示 "Selected: X items"，直接显示操作按钮
+                tvSelectionCount.visibility = View.GONE 
                 btnDeleteSelected.visibility = View.VISIBLE
                 btnCancelSelection.visibility = View.VISIBLE
                 btnSearch.visibility = View.GONE
@@ -92,7 +109,6 @@ class LibraryFragment : Fragment() {
                 btnCancelSelection.visibility = View.GONE
                 btnSearch.visibility = View.VISIBLE
                 btnSort.visibility = View.VISIBLE
-                songAdapter.setSelectionMode(false)
             }
         })
 
@@ -429,7 +445,7 @@ class LibraryFragment : Fragment() {
         directory.listFiles().forEach { file ->
             if (file.isDirectory) {
                 scanDirectory(file, foundUris)
-            } else if (file.name?.lowercase()?.endsWith(".mp3") == true) {
+            } else if (AudioFileValidator.isAudioFile(file.name)) {
                 val uriString = file.uri.toString()
                 foundUris.add(uriString)
                 

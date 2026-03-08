@@ -1,5 +1,6 @@
 package com.example.synctune.ui.nowplaying
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -20,12 +21,20 @@ import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.palette.graphics.Palette
 import com.example.synctune.R
+import com.example.synctune.library.SongDao
 import com.example.synctune.player.PlayerManager
+import com.example.synctune.sync.SyncManager
+import com.example.synctune.sync.WebDAVHelper
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.File
 import java.util.Locale
 
@@ -40,8 +49,12 @@ class NowPlayingFragment : Fragment() {
     private var btnPlayPause: FloatingActionButton? = null
     private var btnShuffle: ImageButton? = null
     private var btnRepeat: ImageButton? = null
+    private var btnFavourite: ImageButton? = null
     private var backgroundGradient: View? = null
     
+    private lateinit var songDao: SongDao
+    private lateinit var syncManager: SyncManager
+
     private val handler = Handler(Looper.getMainLooper())
     private val updateProgressAction = object : Runnable {
         override fun run() {
@@ -55,6 +68,9 @@ class NowPlayingFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View? {
         val view = inflater.inflate(R.layout.fragment_now_playing, container, false)
+        
+        songDao = SongDao(requireContext())
+        syncManager = SyncManager(requireContext())
         
         initViews(view)
         setupPlayerListener()
@@ -78,6 +94,7 @@ class NowPlayingFragment : Fragment() {
         btnPlayPause = view.findViewById(R.id.btn_play_pause)
         btnShuffle = view.findViewById(R.id.btn_shuffle)
         btnRepeat = view.findViewById(R.id.btn_repeat)
+        btnFavourite = view.findViewById(R.id.btn_player_favourite)
         backgroundGradient = view.findViewById(R.id.background_gradient)
 
         val btnClickAnim = AnimationUtils.loadAnimation(requireContext(), R.anim.btn_click)
@@ -119,6 +136,11 @@ class NowPlayingFragment : Fragment() {
             }
         }
 
+        btnFavourite?.setOnClickListener {
+            it.startAnimation(btnClickAnim)
+            toggleFavourite()
+        }
+
         seekBar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
@@ -128,6 +150,48 @@ class NowPlayingFragment : Fragment() {
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
+    }
+
+    private fun toggleFavourite() {
+        val player = PlayerManager.getPlayer(requireContext())
+        val currentMediaItem = player.currentMediaItem ?: return
+        val hash = currentMediaItem.mediaId
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val song = songDao.getSongByHash(hash) ?: return@launch
+            val newStatus = !song.isFavourite
+            songDao.updateFavouriteStatus(song.id, newStatus)
+            
+            // 同步到 WebDAV
+            try {
+                val url = syncManager.getWebDAVUrl()
+                val user = syncManager.getWebDAVUser()
+                val pass = syncManager.getWebDAVPass()
+                if (!url.isNullOrEmpty() && !user.isNullOrEmpty() && !pass.isNullOrEmpty()) {
+                    val helper = WebDAVHelper(url, user, pass)
+                    uploadFavouritesJson(helper)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            withContext(Dispatchers.Main) {
+                updateFavouriteIcon(newStatus)
+            }
+        }
+    }
+
+    private suspend fun uploadFavouritesJson(helper: WebDAVHelper) {
+        val allSongs = songDao.getAllSongs()
+        val favJson = JSONObject()
+        allSongs.forEach { song ->
+            if (song.fileHash.isNotEmpty()) {
+                favJson.put(song.fileHash, song.isFavourite)
+            }
+        }
+        val tempFile = File(requireContext().cacheDir, "favourites.json")
+        tempFile.writeText(favJson.toString())
+        helper.uploadFile(requireContext(), androidx.documentfile.provider.DocumentFile.fromFile(tempFile))
     }
 
     private fun setupPlayerListener() {
@@ -170,6 +234,24 @@ class NowPlayingFragment : Fragment() {
             albumArt?.setImageBitmap(bitmap)
             albumArt?.startAnimation(AnimationUtils.loadAnimation(requireContext(), android.R.anim.fade_in))
             updateBackgroundColor(bitmap)
+            
+            // 更新收藏状态
+            lifecycleScope.launch(Dispatchers.IO) {
+                val song = songDao.getSongByHash(it.mediaId)
+                withContext(Dispatchers.Main) {
+                    updateFavouriteIcon(song?.isFavourite ?: false)
+                }
+            }
+        }
+    }
+
+    private fun updateFavouriteIcon(isFavourite: Boolean) {
+        if (!isAdded) return
+        btnFavourite?.setImageResource(R.drawable.ic_heart)
+        if (isFavourite) {
+            btnFavourite?.setColorFilter(ContextCompat.getColor(requireContext(), R.color.purple_500))
+        } else {
+            btnFavourite?.setColorFilter(ContextCompat.getColor(requireContext(), R.color.white))
         }
     }
 

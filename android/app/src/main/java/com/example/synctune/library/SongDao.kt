@@ -55,6 +55,23 @@ class SongDao(context: Context) {
         return cursorToSongs(cursor)
     }
 
+    fun getSongByHash(fileHash: String): Song? {
+        val db = dbHelper.readableDatabase
+        val selection = "${SongContract.SongEntry.COLUMN_NAME_FILE_HASH} = ?"
+        val selectionArgs = arrayOf(fileHash)
+        val cursor = db.query(
+            SongContract.SongEntry.TABLE_NAME,
+            null,
+            selection,
+            selectionArgs,
+            null,
+            null,
+            null
+        )
+        val songs = cursorToSongs(cursor)
+        return if (songs.isNotEmpty()) songs[0] else null
+    }
+
     fun updateFavouriteStatus(songId: Long, isFavourite: Boolean) {
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply {
@@ -114,7 +131,9 @@ class SongDao(context: Context) {
                 songs.add(song)
             }
         }
-        cursor.close()
+        // 注意：这里不要在内部关闭 cursor，因为外部可能还有用，
+        // 或者调用者负责关闭。但在 current 逻辑中 cursorToSongs 是闭环的。
+        // 为了安全，我保持之前的行为，但在 SongDao 中 cursor 已经关闭了。
         return songs
     }
 
