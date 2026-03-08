@@ -28,7 +28,6 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         val player = PlayerManager.getPlayer(this)
         
-        // 设置 SessionActivity，确保点击灵动岛/胶囊能正确跳回 App
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("open_now_playing", true)
@@ -44,7 +43,6 @@ class PlaybackService : MediaSessionService() {
             .setCallback(CustomMediaSessionCallback())
             .build()
 
-        // 监听播放器状态，用于在切换模式时更新灵动岛/通知栏图标
         player.addListener(object : Player.Listener {
             override fun onRepeatModeChanged(repeatMode: Int) {
                 updateCustomLayout()
@@ -57,13 +55,9 @@ class PlaybackService : MediaSessionService() {
         updateCustomLayout()
     }
 
-    /**
-     * 更新通知栏和系统的自定义按钮布局（适配灵动岛/胶囊控制）
-     */
     private fun updateCustomLayout() {
         val player = mediaSession?.player ?: return
         
-        // 根据当前状态选择显示的图标
         val (iconRes, label) = when {
             player.shuffleModeEnabled -> {
                 R.drawable.ic_shuffle to "随机播放"
@@ -83,7 +77,6 @@ class PlaybackService : MediaSessionService() {
             .setEnabled(true)
             .build()
 
-        // 设置自定义布局，Media3 会将其推送到系统控制中心/胶囊
         mediaSession?.setCustomLayout(listOf(playbackModeButton))
     }
 
@@ -93,7 +86,6 @@ class PlaybackService : MediaSessionService() {
             session: MediaSession,
             controller: MediaSession.ControllerInfo
         ): MediaSession.ConnectionResult {
-            // 允许所有基础指令 + 我们的自定义模式切换指令
             val sessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
                 .add(SessionCommand(COMMAND_CYCLE_PLAYBACK_MODE, Bundle.EMPTY))
                 .build()
@@ -115,7 +107,6 @@ class PlaybackService : MediaSessionService() {
             val player = session.player
             if (customCommand.customAction == COMMAND_CYCLE_PLAYBACK_MODE) {
                 cyclePlaybackMode(player)
-                // 注意：updateCustomLayout 会在 player 监听器中被调用
                 return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED))
@@ -124,17 +115,14 @@ class PlaybackService : MediaSessionService() {
         private fun cyclePlaybackMode(player: Player) {
             when {
                 !player.shuffleModeEnabled && player.repeatMode == Player.REPEAT_MODE_ALL -> {
-                    // 列表循环 -> 单曲循环
                     player.repeatMode = Player.REPEAT_MODE_ONE
                     player.shuffleModeEnabled = false
                 }
                 !player.shuffleModeEnabled && player.repeatMode == Player.REPEAT_MODE_ONE -> {
-                    // 单曲循环 -> 随机播放
                     player.repeatMode = Player.REPEAT_MODE_ALL
                     player.shuffleModeEnabled = true
                 }
                 else -> {
-                    // 随机播放 -> 列表循环
                     player.repeatMode = Player.REPEAT_MODE_ALL
                     player.shuffleModeEnabled = false
                 }
@@ -148,10 +136,11 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         mediaSession?.run {
-            player.release()
             release()
             mediaSession = null
         }
+        // 关键：统一由 PlayerManager 释放并重置单例，解决冷启动和二次启动失效问题
+        PlayerManager.releasePlayer()
         super.onDestroy()
     }
 }

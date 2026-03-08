@@ -49,7 +49,8 @@ class LibraryFragment : Fragment() {
     private var favCache = mutableMapOf<String, Boolean>()
     
     private enum class SortOrder { NAME, ARTIST, DATE }
-    private var currentSortOrder = SortOrder.NAME
+    // 修改默认排序为日期排序
+    private var currentSortOrder = SortOrder.DATE
     private var searchQuery: String = ""
 
     private var backPressedCallback: OnBackPressedCallback? = null
@@ -97,7 +98,6 @@ class LibraryFragment : Fragment() {
             backPressedCallback?.isEnabled = isSelectionMode
             
             if (isSelectionMode) {
-                // 不显示 "Selected: X items"，直接显示操作按钮
                 tvSelectionCount.visibility = View.GONE 
                 btnDeleteSelected.visibility = View.VISIBLE
                 btnCancelSelection.visibility = View.VISIBLE
