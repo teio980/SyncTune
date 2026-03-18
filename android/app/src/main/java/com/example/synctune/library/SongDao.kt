@@ -10,173 +10,125 @@ class SongDao(context: Context) {
 
     fun insertSong(song: Song): Long {
         val db = dbHelper.writableDatabase
-
-        val values = ContentValues().apply {
-            put(SongContract.SongEntry.COLUMN_NAME_TITLE, song.title)
-            put(SongContract.SongEntry.COLUMN_NAME_ARTIST, song.artist)
-            put(SongContract.SongEntry.COLUMN_NAME_ALBUM, song.album)
-            put(SongContract.SongEntry.COLUMN_NAME_FILE_PATH, song.filePath)
-            put(SongContract.SongEntry.COLUMN_NAME_FILE_NAME, song.fileName)
-            put(SongContract.SongEntry.COLUMN_NAME_FILE_HASH, song.fileHash)
-            put(SongContract.SongEntry.COLUMN_NAME_MODIFIED_TIME, song.modifiedTime)
-            put(SongContract.SongEntry.COLUMN_NAME_IS_FAVOURITE, if (song.isFavourite) 1 else 0)
-        }
-
-        return db.insert(SongContract.SongEntry.TABLE_NAME, null, values)
+        return db.insert(SongContract.SongEntry.TABLE_NAME, null, songToContentValues(song))
     }
 
     fun getAllSongs(): List<Song> {
+        return getAllSongsSorted()
+    }
+
+    fun getAllSongsSorted(orderBy: String = "title"): List<Song> {
         val db = dbHelper.readableDatabase
-        val cursor = db.query(
-            SongContract.SongEntry.TABLE_NAME,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null
-        )
+        val sortOrder = when(orderBy) {
+            "artist" -> "${SongContract.SongEntry.COLUMN_NAME_ARTIST} COLLATE NOCASE ASC"
+            "date" -> "${SongContract.SongEntry.COLUMN_NAME_MODIFIED_TIME} DESC"
+            else -> "${SongContract.SongEntry.COLUMN_NAME_TITLE} COLLATE NOCASE ASC"
+        }
+        val cursor = db.query(SongContract.SongEntry.TABLE_NAME, null, null, null, null, null, sortOrder)
         return cursorToSongs(cursor)
     }
 
-    fun getFavouriteSongs(): List<Song> {
-        val db = dbHelper.readableDatabase
-        val selection = "${SongContract.SongEntry.COLUMN_NAME_IS_FAVOURITE} = ?"
-        val selectionArgs = arrayOf("1")
-        val cursor = db.query(
-            SongContract.SongEntry.TABLE_NAME,
-            null,
-            selection,
-            selectionArgs,
-            null,
-            null,
-            null
-        )
-        return cursorToSongs(cursor)
-    }
-
-    fun getSongByHash(fileHash: String): Song? {
+    fun getSongByHash(hash: String): Song? {
         val db = dbHelper.readableDatabase
         val selection = "${SongContract.SongEntry.COLUMN_NAME_FILE_HASH} = ?"
-        val selectionArgs = arrayOf(fileHash)
-        val cursor = db.query(
-            SongContract.SongEntry.TABLE_NAME,
-            null,
-            selection,
-            selectionArgs,
-            null,
-            null,
-            null
-        )
+        val selectionArgs = arrayOf(hash)
+        val cursor = db.query(SongContract.SongEntry.TABLE_NAME, null, selection, selectionArgs, null, null, null)
         val songs = cursorToSongs(cursor)
         return if (songs.isNotEmpty()) songs[0] else null
     }
 
+    fun getFavouriteSongs(orderBy: String = "title"): List<Song> {
+        val db = dbHelper.readableDatabase
+        val selection = "${SongContract.SongEntry.COLUMN_NAME_IS_FAVOURITE} = ?"
+        val selectionArgs = arrayOf("1")
+        val sortOrder = when(orderBy) {
+            "artist" -> "${SongContract.SongEntry.COLUMN_NAME_ARTIST} COLLATE NOCASE ASC"
+            "date" -> "${SongContract.SongEntry.COLUMN_NAME_MODIFIED_TIME} DESC"
+            else -> "${SongContract.SongEntry.COLUMN_NAME_TITLE} COLLATE NOCASE ASC"
+        }
+        val cursor = db.query(SongContract.SongEntry.TABLE_NAME, null, selection, selectionArgs, null, null, sortOrder)
+        return cursorToSongs(cursor)
+    }
+
+    fun updateSong(song: Song) {
+        val db = dbHelper.writableDatabase
+        val selection = "${SongContract.SongEntry.COLUMN_NAME_ID} = ?"
+        val selectionArgs = arrayOf(song.id.toString())
+        db.update(SongContract.SongEntry.TABLE_NAME, songToContentValues(song), selection, selectionArgs)
+    }
+
     fun updateFavouriteStatus(songId: Long, isFavourite: Boolean) {
         val db = dbHelper.writableDatabase
-        val values = ContentValues().apply {
+        val values = ContentValues().apply { 
             put(SongContract.SongEntry.COLUMN_NAME_IS_FAVOURITE, if (isFavourite) 1 else 0)
+            // 关键：每次更新收藏状态时，自动更新最后修改时间
+            put(SongContract.SongEntry.COLUMN_NAME_FAV_LAST_UPDATED, System.currentTimeMillis())
         }
-        val selection = "${SongContract.SongEntry.COLUMN_NAME_ID} = ?"
-        val selectionArgs = arrayOf(songId.toString())
-        db.update(SongContract.SongEntry.TABLE_NAME, values, selection, selectionArgs)
+        db.update(SongContract.SongEntry.TABLE_NAME, values, "${SongContract.SongEntry.COLUMN_NAME_ID} = ?", arrayOf(songId.toString()))
     }
 
-    fun updateFavouriteByHash(fileHash: String, isFavourite: Boolean) {
+    // 内部同步专用：允许手动指定时间戳（从云端同步时使用）
+    fun updateFavouriteStatusWithTimestamp(songId: Long, isFavourite: Boolean, timestamp: Long) {
         val db = dbHelper.writableDatabase
-        val values = ContentValues().apply {
+        val values = ContentValues().apply { 
             put(SongContract.SongEntry.COLUMN_NAME_IS_FAVOURITE, if (isFavourite) 1 else 0)
+            put(SongContract.SongEntry.COLUMN_NAME_FAV_LAST_UPDATED, timestamp)
         }
-        val selection = "${SongContract.SongEntry.COLUMN_NAME_FILE_HASH} = ?"
-        val selectionArgs = arrayOf(fileHash)
-        db.update(SongContract.SongEntry.TABLE_NAME, values, selection, selectionArgs)
+        db.update(SongContract.SongEntry.TABLE_NAME, values, "${SongContract.SongEntry.COLUMN_NAME_ID} = ?", arrayOf(songId.toString()))
     }
 
-    fun updateFileNameAndPath(fileHash: String, fileName: String, filePath: String) {
+    fun updateDirtyStatus(songId: Long, isDirty: Boolean) {
         val db = dbHelper.writableDatabase
-        val values = ContentValues().apply {
-            put(SongContract.SongEntry.COLUMN_NAME_FILE_NAME, fileName)
-            put(SongContract.SongEntry.COLUMN_NAME_FILE_PATH, filePath)
+        val values = ContentValues().apply { put(SongContract.SongEntry.COLUMN_NAME_IS_DIRTY, if (isDirty) 1 else 0) }
+        db.update(SongContract.SongEntry.TABLE_NAME, values, "${SongContract.SongEntry.COLUMN_NAME_ID} = ?", arrayOf(songId.toString()))
+    }
+
+    fun deleteSongsByIds(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        val db = dbHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            ids.forEach { db.delete(SongContract.SongEntry.TABLE_NAME, "${SongContract.SongEntry.COLUMN_NAME_ID} = ?", arrayOf(it.toString())) }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
-        val selection = "${SongContract.SongEntry.COLUMN_NAME_FILE_HASH} = ?"
-        val selectionArgs = arrayOf(fileHash)
-        db.update(SongContract.SongEntry.TABLE_NAME, values, selection, selectionArgs)
+    }
+
+    private fun songToContentValues(song: Song) = ContentValues().apply {
+        put(SongContract.SongEntry.COLUMN_NAME_TITLE, song.title)
+        put(SongContract.SongEntry.COLUMN_NAME_ARTIST, song.artist)
+        put(SongContract.SongEntry.COLUMN_NAME_ALBUM, song.album)
+        put(SongContract.SongEntry.COLUMN_NAME_FILE_PATH, song.filePath)
+        put(SongContract.SongEntry.COLUMN_NAME_FILE_NAME, song.fileName)
+        put(SongContract.SongEntry.COLUMN_NAME_FILE_HASH, song.fileHash)
+        put(SongContract.SongEntry.COLUMN_NAME_MODIFIED_TIME, song.modifiedTime)
+        put(SongContract.SongEntry.COLUMN_NAME_IS_FAVOURITE, if (song.isFavourite) 1 else 0)
+        put(SongContract.SongEntry.COLUMN_NAME_IS_DIRTY, if (song.isDirty) 1 else 0)
+        put(SongContract.SongEntry.COLUMN_NAME_FAV_LAST_UPDATED, song.favLastUpdated)
     }
 
     private fun cursorToSongs(cursor: Cursor): List<Song> {
         val songs = mutableListOf<Song>()
         with(cursor) {
-            val idIndex = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_ID)
-            val titleIndex = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_TITLE)
-            val artistIndex = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_ARTIST)
-            val albumIndex = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_ALBUM)
-            val filePathIndex = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_FILE_PATH)
-            val fileNameIndex = getColumnIndex(SongContract.SongEntry.COLUMN_NAME_FILE_NAME)
-            val fileHashIndex = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_FILE_HASH)
-            val modifiedTimeIndex = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_MODIFIED_TIME)
-            val isFavouriteIndex = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_IS_FAVOURITE)
+            val idI = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_ID)
+            val titleI = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_TITLE)
+            val artistI = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_ARTIST)
+            val albumI = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_ALBUM)
+            val pathI = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_FILE_PATH)
+            val nameI = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_FILE_NAME)
+            val hashI = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_FILE_HASH)
+            val modI = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_MODIFIED_TIME)
+            val favI = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_IS_FAVOURITE)
+            val dirtyI = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_IS_DIRTY)
+            val favTimeI = getColumnIndexOrThrow(SongContract.SongEntry.COLUMN_NAME_FAV_LAST_UPDATED)
 
             while (moveToNext()) {
-                val song = Song(
-                    id = getLong(idIndex),
-                    title = getString(titleIndex) ?: "Unknown",
-                    artist = getString(artistIndex) ?: "Unknown Artist",
-                    album = getString(albumIndex) ?: "Unknown Album",
-                    filePath = getString(filePathIndex) ?: "",
-                    fileName = if (fileNameIndex != -1) getString(fileNameIndex) ?: "" else "",
-                    fileHash = getString(fileHashIndex) ?: "",
-                    modifiedTime = getLong(modifiedTimeIndex),
-                    isFavourite = getInt(isFavouriteIndex) == 1
-                )
-                songs.add(song)
+                songs.add(Song(getLong(idI), getString(titleI) ?: "Unknown", getString(artistI) ?: "Unknown", getString(albumI) ?: "Unknown",
+                    getString(pathI) ?: "", getString(nameI) ?: "", getString(hashI) ?: "", getLong(modI), getInt(favI) == 1, getInt(dirtyI) == 1, getLong(favTimeI)))
             }
         }
-        // 注意：这里不要在内部关闭 cursor，因为外部可能还有用，
-        // 或者调用者负责关闭。但在 current 逻辑中 cursorToSongs 是闭环的。
-        // 为了安全，我保持之前的行为，但在 SongDao 中 cursor 已经关闭了。
+        cursor.close()
         return songs
-    }
-
-    fun isSongExists(fileHash: String): Boolean {
-        val db = dbHelper.readableDatabase
-        val selection = "${SongContract.SongEntry.COLUMN_NAME_FILE_HASH} = ?"
-        val selectionArgs = arrayOf(fileHash)
-        val cursor = db.query(
-            SongContract.SongEntry.TABLE_NAME,
-            null,
-            selection,
-            selectionArgs,
-            null,
-            null,
-            null
-        )
-        val exists = cursor.count > 0
-        cursor.close()
-        return exists
-    }
-
-    fun isSongExistsByPath(filePath: String): Boolean {
-        val db = dbHelper.readableDatabase
-        val selection = "${SongContract.SongEntry.COLUMN_NAME_FILE_PATH} = ?"
-        val selectionArgs = arrayOf(filePath)
-        val cursor = db.query(
-            SongContract.SongEntry.TABLE_NAME,
-            null,
-            selection,
-            selectionArgs,
-            null,
-            null,
-            null
-        )
-        val exists = cursor.count > 0
-        cursor.close()
-        return exists
-    }
-
-    fun deleteSongById(id: Long) {
-        val db = dbHelper.writableDatabase
-        val selection = "${SongContract.SongEntry.COLUMN_NAME_ID} = ?"
-        val selectionArgs = arrayOf(id.toString())
-        db.delete(SongContract.SongEntry.TABLE_NAME, selection, selectionArgs)
     }
 }

@@ -64,7 +64,7 @@
     <string name="exo_controls_fastforward_description">Премотај напред</string>
     <string name="exo_controls_fullscreen_enter_description">Приказ на цел екран</string>
     <string name="exo_controls_fullscreen_exit_description">Излезете од цел екран</string>
-    <string name="exo_controls_hide">Сокриј ги контролите на плеерот</string>
+    <string name="exo_controls_hide">Скриј ги контролите на плеерот</string>
     <string name="exo_controls_next_description">Следна</string>
     <string name="exo_controls_overflow_hide_description">Сокријте ги дополнителните поставки</string>
     <string name="exo_controls_overflow_show_description">Погледнете ги дополнителните поставки</string>

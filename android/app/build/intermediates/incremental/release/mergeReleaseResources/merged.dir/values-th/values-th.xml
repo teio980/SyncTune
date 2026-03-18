@@ -100,7 +100,7 @@
     <string name="exo_track_role_closed_captions">คำบรรยาย</string>
     <string name="exo_track_role_commentary">ความคิดเห็น</string>
     <string name="exo_track_role_supplementary">แทร็กเสริม</string>
-    <string name="exo_track_selection_auto">ยานยนต์</string>
+    <string name="exo_track_selection_auto">อัตโนมัติ</string>
     <string name="exo_track_selection_none">ไม่มี</string>
     <string name="exo_track_selection_title_audio">เสียง</string>
     <string name="exo_track_selection_title_text">ข้อความ</string>

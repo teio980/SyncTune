@@ -36,10 +36,16 @@ class MusicDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
         if (oldVersion < 4) {
             db.execSQL("ALTER TABLE ${SongContract.SongEntry.TABLE_NAME} ADD COLUMN ${SongContract.SongEntry.COLUMN_NAME_FILE_HASH} TEXT")
         }
+        if (oldVersion < 5) {
+            db.execSQL("ALTER TABLE ${SongContract.SongEntry.TABLE_NAME} ADD COLUMN ${SongContract.SongEntry.COLUMN_NAME_IS_DIRTY} INTEGER DEFAULT 0")
+        }
+        if (oldVersion < 6) {
+            db.execSQL("ALTER TABLE ${SongContract.SongEntry.TABLE_NAME} ADD COLUMN ${SongContract.SongEntry.COLUMN_NAME_FAV_LAST_UPDATED} INTEGER DEFAULT 0")
+        }
     }
 
     companion object {
-        const val DATABASE_VERSION = 4
+        const val DATABASE_VERSION = 6
         const val DATABASE_NAME = "Music.db"
 
         private const val SQL_CREATE_ENTRIES = """
@@ -52,7 +58,9 @@ class MusicDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
                 ${SongContract.SongEntry.COLUMN_NAME_FILE_NAME} TEXT,
                 ${SongContract.SongEntry.COLUMN_NAME_FILE_HASH} TEXT,
                 ${SongContract.SongEntry.COLUMN_NAME_MODIFIED_TIME} INTEGER,
-                ${SongContract.SongEntry.COLUMN_NAME_IS_FAVOURITE} INTEGER DEFAULT 0)
+                ${SongContract.SongEntry.COLUMN_NAME_IS_FAVOURITE} INTEGER DEFAULT 0,
+                ${SongContract.SongEntry.COLUMN_NAME_IS_DIRTY} INTEGER DEFAULT 0,
+                ${SongContract.SongEntry.COLUMN_NAME_FAV_LAST_UPDATED} INTEGER DEFAULT 0)
             """
 
         private const val SQL_DELETE_ENTRIES = "DROP TABLE IF EXISTS ${SongContract.SongEntry.TABLE_NAME}"

@@ -15,6 +15,7 @@ import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
 import androidx.work.*
 import com.example.synctune.R
+import com.example.synctune.library.SongDao
 import com.example.synctune.sync.AudioFileValidator
 import com.example.synctune.sync.SyncManager
 import com.example.synctune.sync.SyncWorker
@@ -31,6 +32,7 @@ class SyncFragment : Fragment() {
 
     private lateinit var syncManager: SyncManager
     private var webDAVHelper: WebDAVHelper? = null
+    private lateinit var songDao: SongDao
 
     private lateinit var tvStatus: TextView
     private lateinit var tvLocalCount: TextView
@@ -41,9 +43,11 @@ class SyncFragment : Fragment() {
     private lateinit var btnTwoWay: Button
 
     private lateinit var cardProgress: MaterialCardView
+    private lateinit var tvProgressStatus: TextView
     private lateinit var tvProgressFile: TextView
     private lateinit var progressBar: LinearProgressIndicator
     private lateinit var tvProgressCount: TextView
+    private lateinit var tvProgressSize: TextView
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -51,6 +55,7 @@ class SyncFragment : Fragment() {
     ): View? {
         val view = inflater.inflate(R.layout.fragment_sync, container, false)
         syncManager = SyncManager(requireContext())
+        songDao = SongDao(requireContext())
 
         initViews(view)
         setupHelper()
@@ -70,9 +75,11 @@ class SyncFragment : Fragment() {
         btnTwoWay = view.findViewById(R.id.btn_two_way_sync)
 
         cardProgress = view.findViewById(R.id.card_progress)
+        tvProgressStatus = view.findViewById(R.id.tv_progress_status)
         tvProgressFile = view.findViewById(R.id.tv_progress_file)
         progressBar = view.findViewById(R.id.progress_bar)
         tvProgressCount = view.findViewById(R.id.tv_progress_count)
+        tvProgressSize = view.findViewById(R.id.tv_progress_size)
 
         btnUpload.setOnClickListener { performSync("UPLOAD") }
         btnDownload.setOnClickListener { performSync("DOWNLOAD") }
@@ -103,11 +110,12 @@ class SyncFragment : Fragment() {
         }
 
         lifecycleScope.launch(Dispatchers.IO) {
-            val localFiles = getLocalAudioFiles()
-            val remoteFilesResult = webDAVHelper?.listRemoteFiles()
-            
+            val localSongs = songDao.getAllSongsSorted()
             withContext(Dispatchers.Main) {
-                tvLocalCount.text = localFiles.size.toString()
+                tvLocalCount.text = localSongs.size.toString()
+            }
+            val remoteFilesResult = webDAVHelper?.listRemoteFiles()
+            withContext(Dispatchers.Main) {
                 tvCloudCount.text = if (remoteFilesResult?.isSuccess == true) {
                     remoteFilesResult.getOrNull()?.size.toString()
                 } else "0"
@@ -126,11 +134,33 @@ class SyncFragment : Fragment() {
                     WorkInfo.State.RUNNING -> {
                         setLoading(true)
                         val progress = workInfo.progress
-                        val fileName = progress.getString("file_name") ?: "Syncing..."
+
+                        val status = progress.getString("step_message") ?: "Syncing..."
+                        val fileName = progress.getString("file_name") ?: ""
                         val current = progress.getInt("current", 0)
                         val total = progress.getInt("total", 0)
+                        val currentSize = progress.getString("current_size") ?: "0"
+                        val totalSize = progress.getString("total_size") ?: "0"
+                        
+                        tvProgressStatus.text = status
+                        tvProgressFile.text = fileName
+                        
                         if (total > 0) {
-                            updateProgress(fileName, current, total)
+                            tvProgressCount.text = "$current / $total"
+                            progressBar.isIndeterminate = false
+                            progressBar.max = total
+                            progressBar.progress = current
+                            
+                            // 这里是关键：显示 当前MB / 总共MB
+                            if (totalSize != "0") {
+                                tvProgressSize.text = "$currentSize / $totalSize MB"
+                            } else {
+                                tvProgressSize.text = ""
+                            }
+                        } else {
+                            tvProgressCount.text = ""
+                            tvProgressSize.text = ""
+                            progressBar.isIndeterminate = true
                         }
                     }
                     WorkInfo.State.SUCCEEDED -> {
@@ -142,9 +172,7 @@ class SyncFragment : Fragment() {
                         setLoading(false)
                         Toast.makeText(requireContext(), R.string.sync_failed, Toast.LENGTH_SHORT).show()
                     }
-                    else -> {
-                        setLoading(false)
-                    }
+                    else -> setLoading(false)
                 }
             })
     }
@@ -155,14 +183,8 @@ class SyncFragment : Fragment() {
             return
         }
 
-        val data = Data.Builder()
-            .putString("sync_type", type)
-            .build()
-
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
+        val data = Data.Builder().putString("sync_type", type).build()
+        val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
         val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
             .setInputData(data)
             .setConstraints(constraints)
@@ -171,24 +193,6 @@ class SyncFragment : Fragment() {
 
         WorkManager.getInstance(requireContext())
             .enqueueUniqueWork("music_sync", ExistingWorkPolicy.REPLACE, syncRequest)
-        
-        Toast.makeText(requireContext(), "Background sync started", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun getLocalAudioFiles(): List<DocumentFile> {
-        val prefs = requireActivity().getSharedPreferences("SyncTunePrefs", Context.MODE_PRIVATE)
-        val savedUriString = prefs.getString("music_directory_uri", null) ?: return emptyList()
-        val rootDoc = DocumentFile.fromTreeUri(requireContext(), Uri.parse(savedUriString)) ?: return emptyList()
-        
-        val result = mutableListOf<DocumentFile>()
-        fun scan(dir: DocumentFile) {
-            dir.listFiles().forEach { file ->
-                if (file.isDirectory) scan(file)
-                else if (AudioFileValidator.isAudioFile(file.name)) result.add(file)
-            }
-        }
-        scan(rootDoc)
-        return result
     }
 
     private fun setLoading(loading: Boolean) {
@@ -198,10 +202,15 @@ class SyncFragment : Fragment() {
         btnTwoWay.isEnabled = !loading
     }
 
-    private fun updateProgress(fileName: String, current: Int, total: Int) {
-        tvProgressFile.text = fileName
-        tvProgressCount.text = getString(R.string.sync_progress, current, total)
-        progressBar.max = total
-        progressBar.progress = current
+    private fun getLocalAudioFiles(): List<DocumentFile> {
+        val prefs = requireActivity().getSharedPreferences("SyncTunePrefs", Context.MODE_PRIVATE)
+        val savedUriString = prefs.getString("music_directory_uri", null) ?: return emptyList()
+        val rootDoc = DocumentFile.fromTreeUri(requireContext(), Uri.parse(savedUriString)) ?: return emptyList()
+        val result = mutableListOf<DocumentFile>()
+        fun scan(dir: DocumentFile) {
+            dir.listFiles().forEach { file -> if (file.isDirectory) scan(file) else if (AudioFileValidator.isAudioFile(file.name)) result.add(file) }
+        }
+        scan(rootDoc)
+        return result
     }
 }

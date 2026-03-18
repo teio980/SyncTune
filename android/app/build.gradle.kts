@@ -52,7 +52,7 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.0")
     implementation("androidx.fragment:fragment-ktx:1.5.7")
     implementation("androidx.activity:activity-ktx:1.8.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.1")
     implementation("androidx.palette:palette-ktx:1.0.0")
     implementation("com.github.bumptech.glide:glide:4.15.1")
@@ -64,6 +64,9 @@ dependencies {
     // WebDAV
     implementation("com.github.thegrizzlylabs:sardine-android:0.9")
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
+
+    // JAudioTagger from Maven Central
+    implementation("net.jthink:jaudiotagger:3.0.1")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

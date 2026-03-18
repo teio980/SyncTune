@@ -1,9 +1,9 @@
 -- Merging decision tree log ---
 manifest
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-37:12
-INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-37:12
-INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-37:12
-INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-37:12
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-53:12
+INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-53:12
+INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-53:12
+INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:2:1-53:12
 MERGED from [androidx.fragment:fragment-ktx:1.5.7] C:\Users\Owner\.gradle\caches\transforms-3\ba1ddbeefad941eede5292b497687aba\transformed\fragment-ktx-1.5.7\AndroidManifest.xml:17:1-24:12
 MERGED from [com.google.android.material:material:1.8.0] C:\Users\Owner\.gradle\caches\transforms-3\dc2c30a11c291dd7e091bf3666772e9b\transformed\material-1.8.0\AndroidManifest.xml:17:1-26:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.1.4] C:\Users\Owner\.gradle\caches\transforms-3\5a3d8f1450f9a1a04e1bdd38bbf63c11\transformed\constraintlayout-2.1.4\AndroidManifest.xml:2:1-11:12
@@ -14,14 +14,15 @@ MERGED from [androidx.viewpager2:viewpager2:1.0.0] C:\Users\Owner\.gradle\caches
 MERGED from [androidx.fragment:fragment:1.5.7] C:\Users\Owner\.gradle\caches\transforms-3\23d951b22db16a0c9018d4534120037c\transformed\fragment-1.5.7\AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.activity:activity:1.8.0] C:\Users\Owner\.gradle\caches\transforms-3\3e700834582c64e272af1a0d1d204e4c\transformed\activity-1.8.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.activity:activity-ktx:1.8.0] C:\Users\Owner\.gradle\caches\transforms-3\453b050f230bac63d6aeadcd72d99eea\transformed\activity-ktx-1.8.0\AndroidManifest.xml:2:1-7:12
-MERGED from [androidx.media3:media3-exoplayer:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\f26ff331fc2c927d9c8d5736409c6d80\transformed\media3-exoplayer-1.0.0\AndroidManifest.xml:17:1-26:12
-MERGED from [androidx.media3:media3-session:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\5cf979a29f8b5ce12c5f16fb89c661e0\transformed\media3-session-1.0.0\AndroidManifest.xml:17:1-24:12
-MERGED from [androidx.media3:media3-datasource:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\cea61d6c5cd273439bd92a6c00bfd0e7\transformed\media3-datasource-1.0.0\AndroidManifest.xml:17:1-24:12
-MERGED from [androidx.media3:media3-extractor:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\5eecd9f5939bb93daf0ee979c8555abd\transformed\media3-extractor-1.0.0\AndroidManifest.xml:17:1-24:12
-MERGED from [androidx.media3:media3-decoder:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\4b40aa7dc8b92cef1db266a8559f047a\transformed\media3-decoder-1.0.0\AndroidManifest.xml:17:1-24:12
-MERGED from [androidx.media3:media3-database:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\77ea389c10824407635efe02498db2d0\transformed\media3-database-1.0.0\AndroidManifest.xml:17:1-24:12
-MERGED from [androidx.media3:media3-common:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\721e57db95188ca1aa2c41ddb6ef42a4\transformed\media3-common-1.0.0\AndroidManifest.xml:17:1-26:12
-MERGED from [androidx.media3:media3-ui:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\40ed7b6d4a26035a4d3928b37d7f3c5b\transformed\media3-ui-1.0.0\AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.media3:media3-exoplayer:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\e57add097d060d4d2422fabc662a59bf\transformed\media3-exoplayer-1.2.1\AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.media3:media3-session:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\e14c95dc5909f284dc86e30a9390b2b9\transformed\media3-session-1.2.1\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-extractor:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\1285122244ee86e9d22a891e17333410\transformed\media3-extractor-1.2.1\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-container:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\8881faa27b7713bf7a0b32143557100a\transformed\media3-container-1.2.1\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-datasource:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\984764db5e47555bca89f1a6a5ca7d2c\transformed\media3-datasource-1.2.1\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-decoder:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\12574af17569a205910cb59fac5fb9d2\transformed\media3-decoder-1.2.1\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-database:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\bc4bd3ee14fa5933310e855bf9344a18\transformed\media3-database-1.2.1\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-common:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\4bc7b3f274c8727c98c3a9eb2c704921\transformed\media3-common-1.2.1\AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.media3:media3-ui:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\57e7524aae475ffcfead6d36c5ba1840\transformed\media3-ui-1.2.1\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.recyclerview:recyclerview:1.3.0] C:\Users\Owner\.gradle\caches\transforms-3\281120335cdfeb21a1d4548ade7d7e73\transformed\recyclerview-1.3.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.customview:customview-poolingcontainer:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\ea47a44b8b867dd8ee001a899d420347\transformed\customview-poolingcontainer-1.0.0\AndroidManifest.xml:17:1-23:12
 MERGED from [androidx.emoji2:emoji2-views-helper:1.2.0] C:\Users\Owner\.gradle\caches\transforms-3\5befcda8b9f51eed8057e8d0a0b66548\transformed\emoji2-views-helper-1.2.0\AndroidManifest.xml:2:1-7:12
@@ -57,14 +58,14 @@ MERGED from [androidx.lifecycle:lifecycle-runtime-ktx:2.6.1] C:\Users\Owner\.gra
 MERGED from [androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.1] C:\Users\Owner\.gradle\caches\transforms-3\2a1dc0ef64aeb32da38f0bb807a13b8d\transformed\lifecycle-viewmodel-ktx-2.6.1\AndroidManifest.xml:17:1-22:12
 MERGED from [com.github.thegrizzlylabs:sardine-android:0.9] C:\Users\Owner\.gradle\caches\transforms-3\2d957cea8b1616f6c05d644e88ece85a\transformed\sardine-android-0.9\AndroidManifest.xml:2:1-7:12
 MERGED from [androidx.room:room-runtime:2.5.0] C:\Users\Owner\.gradle\caches\transforms-3\b47e32a2565719af1febebdef695769c\transformed\room-runtime-2.5.0\AndroidManifest.xml:17:1-31:12
-MERGED from [androidx.annotation:annotation-experimental:1.3.0] C:\Users\Owner\.gradle\caches\transforms-3\bce3c3d39551a2a64e783fa888995479\transformed\annotation-experimental-1.3.0\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.annotation:annotation-experimental:1.3.1] C:\Users\Owner\.gradle\caches\transforms-3\66b1d41ea076de6fec428f84ba13d5c2\transformed\annotation-experimental-1.3.1\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.sqlite:sqlite-framework:2.3.0] C:\Users\Owner\.gradle\caches\transforms-3\097020ba314d2fa86f9337ac25217239\transformed\sqlite-framework-2.3.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.sqlite:sqlite:2.3.0] C:\Users\Owner\.gradle\caches\transforms-3\e6ed432036e1179a60857cf2b4053b7a\transformed\sqlite-2.3.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.cursoradapter:cursoradapter:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\c62172735b84726e747f3584f9a41d93\transformed\cursoradapter-1.0.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.cardview:cardview:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\577b229bee4d5ea0061818be449f87de\transformed\cardview-1.0.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\Owner\.gradle\caches\transforms-3\5981be152c50b8f23751b0cc6503ca06\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:17:1-27:12
+MERGED from [androidx.exifinterface:exifinterface:1.3.6] C:\Users\Owner\.gradle\caches\transforms-3\aca26a8c1e6060fabd4801084e7b8220\transformed\exifinterface-1.3.6\AndroidManifest.xml:17:1-24:12
 MERGED from [com.github.bumptech.glide:gifdecoder:4.15.1] C:\Users\Owner\.gradle\caches\transforms-3\87387f5723220c5366e7f918879c7d03\transformed\gifdecoder-4.15.1\AndroidManifest.xml:2:1-11:12
-MERGED from [androidx.exifinterface:exifinterface:1.3.3] C:\Users\Owner\.gradle\caches\transforms-3\a8a42c9c5ad0c9b78e70efc2918c50ce\transformed\exifinterface-1.3.3\AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Owner\.gradle\caches\transforms-3\d44ecac6aba66a9afe17f960d6e07f3b\transformed\profileinstaller-1.3.0\AndroidManifest.xml:17:1-55:12
 MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\Owner\.gradle\caches\transforms-3\e6850f4de428ec33564b59ac8c943bf1\transformed\startup-runtime-1.1.1\AndroidManifest.xml:17:1-33:12
 MERGED from [androidx.tracing:tracing:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\5e83e419a013a4a26e514f3ebd2e57b7\transformed\tracing-1.0.0\AndroidManifest.xml:17:1-24:12
@@ -89,10 +90,10 @@ ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\Andro
 		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:5:22-64
 uses-permission#android.permission.ACCESS_NETWORK_STATE
 ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:6:5-79
-MERGED from [androidx.media3:media3-exoplayer:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\f26ff331fc2c927d9c8d5736409c6d80\transformed\media3-exoplayer-1.0.0\AndroidManifest.xml:24:5-79
-MERGED from [androidx.media3:media3-exoplayer:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\f26ff331fc2c927d9c8d5736409c6d80\transformed\media3-exoplayer-1.0.0\AndroidManifest.xml:24:5-79
-MERGED from [androidx.media3:media3-common:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\721e57db95188ca1aa2c41ddb6ef42a4\transformed\media3-common-1.0.0\AndroidManifest.xml:24:5-79
-MERGED from [androidx.media3:media3-common:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\721e57db95188ca1aa2c41ddb6ef42a4\transformed\media3-common-1.0.0\AndroidManifest.xml:24:5-79
+MERGED from [androidx.media3:media3-exoplayer:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\e57add097d060d4d2422fabc662a59bf\transformed\media3-exoplayer-1.2.1\AndroidManifest.xml:22:5-79
+MERGED from [androidx.media3:media3-exoplayer:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\e57add097d060d4d2422fabc662a59bf\transformed\media3-exoplayer-1.2.1\AndroidManifest.xml:22:5-79
+MERGED from [androidx.media3:media3-common:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\4bc7b3f274c8727c98c3a9eb2c704921\transformed\media3-common-1.2.1\AndroidManifest.xml:22:5-79
+MERGED from [androidx.media3:media3-common:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\4bc7b3f274c8727c98c3a9eb2c704921\transformed\media3-common-1.2.1\AndroidManifest.xml:22:5-79
 MERGED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:24:5-79
 MERGED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:24:5-79
 	android:name
@@ -115,13 +116,17 @@ uses-permission#android.permission.FOREGROUND_SERVICE_DATA_SYNC
 ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:10:5-87
 	android:name
 		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:10:22-84
-uses-permission#android.permission.POST_NOTIFICATIONS
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:11:5-77
+uses-permission#android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:11:5-92
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:11:22-74
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:11:22-89
+uses-permission#android.permission.POST_NOTIFICATIONS
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:12:5-77
+	android:name
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:12:22-74
 application
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:13:5-35:19
-INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:13:5-35:19
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:14:5-51:19
+INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:14:5-51:19
 MERGED from [com.google.android.material:material:1.8.0] C:\Users\Owner\.gradle\caches\transforms-3\dc2c30a11c291dd7e091bf3666772e9b\transformed\material-1.8.0\AndroidManifest.xml:24:5-20
 MERGED from [com.google.android.material:material:1.8.0] C:\Users\Owner\.gradle\caches\transforms-3\dc2c30a11c291dd7e091bf3666772e9b\transformed\material-1.8.0\AndroidManifest.xml:24:5-20
 MERGED from [androidx.constraintlayout:constraintlayout:2.1.4] C:\Users\Owner\.gradle\caches\transforms-3\5a3d8f1450f9a1a04e1bdd38bbf63c11\transformed\constraintlayout-2.1.4\AndroidManifest.xml:9:5-20
@@ -151,27 +156,31 @@ MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\Owner\.gradle\cach
 	android:appComponentFactory
 		ADDED from [androidx.core:core:1.9.0] C:\Users\Owner\.gradle\caches\transforms-3\1be2f7b99c4696fd5ad9974aa4b3206b\transformed\core-1.9.0\AndroidManifest.xml:28:18-86
 	android:supportsRtl
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:16:9-35
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:19:9-35
 	android:label
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:15:9-41
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:18:9-41
+	android:roundIcon
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:17:9-50
 	tools:targetApi
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:19:9-29
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:22:9-29
+	android:icon
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:16:9-45
 	android:allowBackup
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:14:9-35
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:15:9-35
 	android:theme
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:17:9-46
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:20:9-46
 	android:enableOnBackInvokedCallback
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:18:9-51
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:21:9-51
 service#androidx.work.impl.foreground.SystemForegroundService
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:21:9-25:34
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:24:9-28:34
 MERGED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:53:9-59:35
 MERGED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:53:9-59:35
 	android:enabled
 		ADDED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:56:13-77
 	tools:node
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:25:13-31
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:28:13-31
 	android:exported
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:23:13-37
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:26:13-37
 	tools:ignore
 		ADDED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:58:13-60
 	tools:targetApi
@@ -179,25 +188,49 @@ MERGED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\tra
 	android:directBootAware
 		ADDED from [androidx.work:work-runtime:2.8.1] C:\Users\Owner\.gradle\caches\transforms-3\98b8ca9c3737f2c826226ed0bfb3b9d8\transformed\work-runtime-2.8.1\AndroidManifest.xml:55:13-44
 	android:foregroundServiceType
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:24:13-53
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:27:13-53
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:22:13-81
-activity#com.example.synctune.ui.MainActivity
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:27:9-34:20
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:25:13-81
+service#com.example.synctune.player.PlaybackService
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:30:9-39:19
 	android:exported
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:29:13-36
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:32:13-36
+	tools:ignore
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:34:13-43
+	android:foregroundServiceType
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:33:13-58
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:28:13-44
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:31:13-51
+intent-filter#action:name:android.intent.action.MEDIA_BUTTON+action:name:androidx.media3.session.MediaSessionService
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:35:13-38:29
+action#androidx.media3.session.MediaSessionService
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:36:17-86
+	android:name
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:36:25-83
+action#android.intent.action.MEDIA_BUTTON
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:37:17-77
+	android:name
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:37:25-74
+activity#com.example.synctune.ui.MainActivity
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:41:9-50:20
+	android:label
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:44:13-45
+	android:launchMode
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:45:13-43
+	android:exported
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:43:13-36
+	android:name
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:42:13-44
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:30:13-33:29
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:46:13-49:29
 action#android.intent.action.MAIN
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:31:17-69
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:47:17-69
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:31:25-66
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:47:25-66
 category#android.intent.category.LAUNCHER
-ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:32:17-77
+ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:48:17-77
 	android:name
-		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:32:27-74
+		ADDED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml:48:27-74
 uses-sdk
 INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from C:\Users\Owner\Documents\teiocode\SyncTune\android\app\src\main\AndroidManifest.xml
@@ -222,22 +255,24 @@ MERGED from [androidx.activity:activity:1.8.0] C:\Users\Owner\.gradle\caches\tra
 MERGED from [androidx.activity:activity:1.8.0] C:\Users\Owner\.gradle\caches\transforms-3\3e700834582c64e272af1a0d1d204e4c\transformed\activity-1.8.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.activity:activity-ktx:1.8.0] C:\Users\Owner\.gradle\caches\transforms-3\453b050f230bac63d6aeadcd72d99eea\transformed\activity-ktx-1.8.0\AndroidManifest.xml:5:5-44
 MERGED from [androidx.activity:activity-ktx:1.8.0] C:\Users\Owner\.gradle\caches\transforms-3\453b050f230bac63d6aeadcd72d99eea\transformed\activity-ktx-1.8.0\AndroidManifest.xml:5:5-44
-MERGED from [androidx.media3:media3-exoplayer:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\f26ff331fc2c927d9c8d5736409c6d80\transformed\media3-exoplayer-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-exoplayer:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\f26ff331fc2c927d9c8d5736409c6d80\transformed\media3-exoplayer-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-session:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\5cf979a29f8b5ce12c5f16fb89c661e0\transformed\media3-session-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-session:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\5cf979a29f8b5ce12c5f16fb89c661e0\transformed\media3-session-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-datasource:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\cea61d6c5cd273439bd92a6c00bfd0e7\transformed\media3-datasource-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-datasource:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\cea61d6c5cd273439bd92a6c00bfd0e7\transformed\media3-datasource-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-extractor:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\5eecd9f5939bb93daf0ee979c8555abd\transformed\media3-extractor-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-extractor:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\5eecd9f5939bb93daf0ee979c8555abd\transformed\media3-extractor-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-decoder:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\4b40aa7dc8b92cef1db266a8559f047a\transformed\media3-decoder-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-decoder:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\4b40aa7dc8b92cef1db266a8559f047a\transformed\media3-decoder-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-database:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\77ea389c10824407635efe02498db2d0\transformed\media3-database-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-database:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\77ea389c10824407635efe02498db2d0\transformed\media3-database-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-common:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\721e57db95188ca1aa2c41ddb6ef42a4\transformed\media3-common-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-common:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\721e57db95188ca1aa2c41ddb6ef42a4\transformed\media3-common-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-ui:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\40ed7b6d4a26035a4d3928b37d7f3c5b\transformed\media3-ui-1.0.0\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.media3:media3-ui:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\40ed7b6d4a26035a4d3928b37d7f3c5b\transformed\media3-ui-1.0.0\AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-exoplayer:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\e57add097d060d4d2422fabc662a59bf\transformed\media3-exoplayer-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-exoplayer:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\e57add097d060d4d2422fabc662a59bf\transformed\media3-exoplayer-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-session:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\e14c95dc5909f284dc86e30a9390b2b9\transformed\media3-session-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-session:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\e14c95dc5909f284dc86e30a9390b2b9\transformed\media3-session-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-extractor:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\1285122244ee86e9d22a891e17333410\transformed\media3-extractor-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-extractor:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\1285122244ee86e9d22a891e17333410\transformed\media3-extractor-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-container:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\8881faa27b7713bf7a0b32143557100a\transformed\media3-container-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-container:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\8881faa27b7713bf7a0b32143557100a\transformed\media3-container-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-datasource:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\984764db5e47555bca89f1a6a5ca7d2c\transformed\media3-datasource-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-datasource:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\984764db5e47555bca89f1a6a5ca7d2c\transformed\media3-datasource-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-decoder:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\12574af17569a205910cb59fac5fb9d2\transformed\media3-decoder-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-decoder:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\12574af17569a205910cb59fac5fb9d2\transformed\media3-decoder-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-database:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\bc4bd3ee14fa5933310e855bf9344a18\transformed\media3-database-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-database:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\bc4bd3ee14fa5933310e855bf9344a18\transformed\media3-database-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-common:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\4bc7b3f274c8727c98c3a9eb2c704921\transformed\media3-common-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-common:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\4bc7b3f274c8727c98c3a9eb2c704921\transformed\media3-common-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-ui:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\57e7524aae475ffcfead6d36c5ba1840\transformed\media3-ui-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-ui:1.2.1] C:\Users\Owner\.gradle\caches\transforms-3\57e7524aae475ffcfead6d36c5ba1840\transformed\media3-ui-1.2.1\AndroidManifest.xml:20:5-44
 MERGED from [androidx.recyclerview:recyclerview:1.3.0] C:\Users\Owner\.gradle\caches\transforms-3\281120335cdfeb21a1d4548ade7d7e73\transformed\recyclerview-1.3.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.recyclerview:recyclerview:1.3.0] C:\Users\Owner\.gradle\caches\transforms-3\281120335cdfeb21a1d4548ade7d7e73\transformed\recyclerview-1.3.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.customview:customview-poolingcontainer:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\ea47a44b8b867dd8ee001a899d420347\transformed\customview-poolingcontainer-1.0.0\AndroidManifest.xml:20:5-21:38
@@ -308,8 +343,8 @@ MERGED from [com.github.thegrizzlylabs:sardine-android:0.9] C:\Users\Owner\.grad
 MERGED from [com.github.thegrizzlylabs:sardine-android:0.9] C:\Users\Owner\.gradle\caches\transforms-3\2d957cea8b1616f6c05d644e88ece85a\transformed\sardine-android-0.9\AndroidManifest.xml:5:5-44
 MERGED from [androidx.room:room-runtime:2.5.0] C:\Users\Owner\.gradle\caches\transforms-3\b47e32a2565719af1febebdef695769c\transformed\room-runtime-2.5.0\AndroidManifest.xml:21:5-44
 MERGED from [androidx.room:room-runtime:2.5.0] C:\Users\Owner\.gradle\caches\transforms-3\b47e32a2565719af1febebdef695769c\transformed\room-runtime-2.5.0\AndroidManifest.xml:21:5-44
-MERGED from [androidx.annotation:annotation-experimental:1.3.0] C:\Users\Owner\.gradle\caches\transforms-3\bce3c3d39551a2a64e783fa888995479\transformed\annotation-experimental-1.3.0\AndroidManifest.xml:20:5-44
-MERGED from [androidx.annotation:annotation-experimental:1.3.0] C:\Users\Owner\.gradle\caches\transforms-3\bce3c3d39551a2a64e783fa888995479\transformed\annotation-experimental-1.3.0\AndroidManifest.xml:20:5-44
+MERGED from [androidx.annotation:annotation-experimental:1.3.1] C:\Users\Owner\.gradle\caches\transforms-3\66b1d41ea076de6fec428f84ba13d5c2\transformed\annotation-experimental-1.3.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.annotation:annotation-experimental:1.3.1] C:\Users\Owner\.gradle\caches\transforms-3\66b1d41ea076de6fec428f84ba13d5c2\transformed\annotation-experimental-1.3.1\AndroidManifest.xml:20:5-44
 MERGED from [androidx.sqlite:sqlite-framework:2.3.0] C:\Users\Owner\.gradle\caches\transforms-3\097020ba314d2fa86f9337ac25217239\transformed\sqlite-framework-2.3.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.sqlite:sqlite-framework:2.3.0] C:\Users\Owner\.gradle\caches\transforms-3\097020ba314d2fa86f9337ac25217239\transformed\sqlite-framework-2.3.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.sqlite:sqlite:2.3.0] C:\Users\Owner\.gradle\caches\transforms-3\e6ed432036e1179a60857cf2b4053b7a\transformed\sqlite-2.3.0\AndroidManifest.xml:20:5-44
@@ -320,10 +355,10 @@ MERGED from [androidx.cardview:cardview:1.0.0] C:\Users\Owner\.gradle\caches\tra
 MERGED from [androidx.cardview:cardview:1.0.0] C:\Users\Owner\.gradle\caches\transforms-3\577b229bee4d5ea0061818be449f87de\transformed\cardview-1.0.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\Owner\.gradle\caches\transforms-3\5981be152c50b8f23751b0cc6503ca06\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\Owner\.gradle\caches\transforms-3\5981be152c50b8f23751b0cc6503ca06\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.exifinterface:exifinterface:1.3.6] C:\Users\Owner\.gradle\caches\transforms-3\aca26a8c1e6060fabd4801084e7b8220\transformed\exifinterface-1.3.6\AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.exifinterface:exifinterface:1.3.6] C:\Users\Owner\.gradle\caches\transforms-3\aca26a8c1e6060fabd4801084e7b8220\transformed\exifinterface-1.3.6\AndroidManifest.xml:20:5-22:41
 MERGED from [com.github.bumptech.glide:gifdecoder:4.15.1] C:\Users\Owner\.gradle\caches\transforms-3\87387f5723220c5366e7f918879c7d03\transformed\gifdecoder-4.15.1\AndroidManifest.xml:5:5-7:41
 MERGED from [com.github.bumptech.glide:gifdecoder:4.15.1] C:\Users\Owner\.gradle\caches\transforms-3\87387f5723220c5366e7f918879c7d03\transformed\gifdecoder-4.15.1\AndroidManifest.xml:5:5-7:41
-MERGED from [androidx.exifinterface:exifinterface:1.3.3] C:\Users\Owner\.gradle\caches\transforms-3\a8a42c9c5ad0c9b78e70efc2918c50ce\transformed\exifinterface-1.3.3\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.exifinterface:exifinterface:1.3.3] C:\Users\Owner\.gradle\caches\transforms-3\a8a42c9c5ad0c9b78e70efc2918c50ce\transformed\exifinterface-1.3.3\AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Owner\.gradle\caches\transforms-3\d44ecac6aba66a9afe17f960d6e07f3b\transformed\profileinstaller-1.3.0\AndroidManifest.xml:21:5-44
 MERGED from [androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Owner\.gradle\caches\transforms-3\d44ecac6aba66a9afe17f960d6e07f3b\transformed\profileinstaller-1.3.0\AndroidManifest.xml:21:5-44
 MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\Owner\.gradle\caches\transforms-3\e6850f4de428ec33564b59ac8c943bf1\transformed\startup-runtime-1.1.1\AndroidManifest.xml:21:5-23:41

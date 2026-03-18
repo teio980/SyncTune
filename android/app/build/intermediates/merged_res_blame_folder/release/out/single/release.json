@@ -1,5 +1,9 @@
 [
     {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_launcher_foreground.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_launcher_foreground.xml"
+    },
+    {
         "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_pause.xml.flat",
         "source": "com.example.synctune.app-main-50:/drawable/ic_pause.xml"
     },
@@ -38,6 +42,10 @@
     {
         "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_skip_next.xml.flat",
         "source": "com.example.synctune.app-main-50:/drawable/ic_skip_next.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable-v26_ic_launcher.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable-v26/ic_launcher.xml"
     },
     {
         "merged": "com.example.synctune.app-merged_res-49:/layout_activity_main.xml.flat",
@@ -84,6 +92,10 @@
         "source": "com.example.synctune.app-main-50:/anim/layout_animation_fall_down.xml"
     },
     {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_launcher.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_launcher.xml"
+    },
+    {
         "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_play.xml.flat",
         "source": "com.example.synctune.app-main-50:/drawable/ic_play.xml"
     },
@@ -94,6 +106,10 @@
     {
         "merged": "com.example.synctune.app-merged_res-49:/anim_btn_click.xml.flat",
         "source": "com.example.synctune.app-main-50:/anim/btn_click.xml"
+    },
+    {
+        "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_launcher_background.xml.flat",
+        "source": "com.example.synctune.app-main-50:/drawable/ic_launcher_background.xml"
     },
     {
         "merged": "com.example.synctune.app-merged_res-49:/drawable_ic_repeat.xml.flat",

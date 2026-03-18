@@ -2,20 +2,32 @@ package com.example.synctune.sync
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.work.*
+import java.util.concurrent.TimeUnit
 
-class SyncManager(context: Context) {
+class SyncManager(private val context: Context) {
 
     private val sharedPreferences: SharedPreferences = context.getSharedPreferences("SyncSettings", Context.MODE_PRIVATE)
 
     // General Sync Settings
     fun setSyncEnabled(enabled: Boolean) {
         sharedPreferences.edit().putBoolean("sync_enabled", enabled).apply()
+        if (enabled && isAutoSyncEnabled()) {
+            schedulePeriodicSync()
+        } else {
+            cancelPeriodicSync()
+        }
     }
 
     fun isSyncEnabled(): Boolean = sharedPreferences.getBoolean("sync_enabled", false)
 
     fun setAutoSyncEnabled(enabled: Boolean) {
         sharedPreferences.edit().putBoolean("auto_sync_enabled", enabled).apply()
+        if (enabled && isSyncEnabled()) {
+            schedulePeriodicSync()
+        } else {
+            cancelPeriodicSync()
+        }
     }
 
     fun isAutoSyncEnabled(): Boolean = sharedPreferences.getBoolean("auto_sync_enabled", false)
@@ -48,5 +60,46 @@ class SyncManager(context: Context) {
             .remove("webdav_pass")
             .putBoolean("webdav_configured", false)
             .apply()
+        cancelPeriodicSync()
+    }
+
+    fun startImmediateSync(syncType: String = "TWO_WAY") {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setConstraints(constraints)
+            .setInputData(workDataOf("sync_type" to syncType))
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .build()
+
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "immediate_sync",
+            ExistingWorkPolicy.REPLACE,
+            syncRequest
+        )
+    }
+
+    private fun schedulePeriodicSync() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.UNMETERED) // Default to WiFi for background sync
+            .setRequiresBatteryNotLow(true)
+            .build()
+
+        val periodicSyncRequest = PeriodicWorkRequestBuilder<SyncWorker>(1, TimeUnit.HOURS)
+            .setConstraints(constraints)
+            .setInputData(workDataOf("sync_type" to "TWO_WAY"))
+            .build()
+
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            "periodic_sync",
+            ExistingPeriodicWorkPolicy.KEEP,
+            periodicSyncRequest
+        )
+    }
+
+    private fun cancelPeriodicSync() {
+        WorkManager.getInstance(context).cancelUniqueWork("periodic_sync")
     }
 }

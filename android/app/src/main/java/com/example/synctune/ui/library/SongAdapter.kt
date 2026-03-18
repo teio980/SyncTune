@@ -14,7 +14,9 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
+import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
+import com.bumptech.glide.signature.ObjectKey
 import com.example.synctune.R
 import com.example.synctune.library.Song
 import kotlinx.coroutines.*
@@ -31,7 +33,6 @@ class SongAdapter(
     private var isSelectionMode = false
     private val selectedSongs = mutableSetOf<Song>()
     
-    // 用于在 Adapter 内部进行异步处理
     private val adapterScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     class SongViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -100,17 +101,25 @@ class SongAdapter(
             onFavouriteClick(song)
         }
 
-        // 核心修复：1:1 封面提取放在 IO 线程执行，不阻塞 UI 线程，彻底解决滑动卡顿
         holder.thumbnailJob?.cancel()
-        holder.albumArt.setImageResource(R.drawable.default_album_art)
         
         holder.thumbnailJob = adapterScope.launch {
+            // 立即清除旧 Glide 请求并设为默认图，彻底断开与旧缓存的联系
+            Glide.with(holder.itemView.context).clear(holder.albumArt)
+            holder.albumArt.setImageResource(R.drawable.default_album_art)
+
             val artData = withContext(Dispatchers.IO) {
                 getAlbumArt(holder.itemView.context, song.filePath)
             }
+            
             if (isActive) {
                 Glide.with(holder.itemView.context)
                     .load(artData)
+                    // 核心修复：更强的签名，包含修改时间
+                    .signature(ObjectKey("${song.filePath}_${song.modifiedTime}"))
+                    // 禁止 Glide 在这种情况下使用内存缓存，确保从 artData 重新解码
+                    .skipMemoryCache(true)
+                    .diskCacheStrategy(DiskCacheStrategy.NONE)
                     .placeholder(R.drawable.default_album_art)
                     .error(R.drawable.default_album_art)
                     .transition(DrawableTransitionOptions.withCrossFade())

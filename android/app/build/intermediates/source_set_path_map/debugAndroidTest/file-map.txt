@@ -1,0 +1,6 @@
+com.example.synctune.test.app-annotation-experimental-1.3.1-0 C:\Users\Owner\.gradle\caches\transforms-3\66b1d41ea076de6fec428f84ba13d5c2\transformed\annotation-experimental-1.3.1\res
+com.example.synctune.test.app-core-1.5.0-1 C:\Users\Owner\.gradle\caches\transforms-3\b1fdbd6c12a29475fce917f402636199\transformed\core-1.5.0\res
+com.example.synctune.test.app-androidTest-2 C:\Users\Owner\Documents\teiocode\SyncTune\android\app\build\generated\res\resValues\androidTest\debug
+com.example.synctune.test.app-mergeDebugAndroidTestResources-3 C:\Users\Owner\Documents\teiocode\SyncTune\android\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\merged.dir
+com.example.synctune.test.app-mergeDebugAndroidTestResources-4 C:\Users\Owner\Documents\teiocode\SyncTune\android\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\stripped.dir
+com.example.synctune.test.app-merged_res-5 C:\Users\Owner\Documents\teiocode\SyncTune\android\app\build\intermediates\merged_res\debugAndroidTest

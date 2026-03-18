@@ -4,7 +4,7 @@
             "outputFile": "com.example.synctune.app-mergeDebugResources-47:/values-xlarge-v4/values-xlarge-v4.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\Owner\\.gradle\\caches\\transforms-3\\53ae9d152f73a2bf6e96f275d81b2377\\transformed\\appcompat-1.6.1\\res\\values-xlarge-v4\\values-xlarge-v4.xml",
+                    "source": "C:\\Users\\Owner\\.gradle\\caches\\transforms-3\\fc3ce3640329c6aa953a6a5fd10b1505\\transformed\\appcompat-1.6.1\\res\\values-xlarge-v4\\values-xlarge-v4.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7",
                         "startColumns": "4,4,4,4,4,4",

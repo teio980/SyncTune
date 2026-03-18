@@ -57,24 +57,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\Owner\\.gradle\\caches\\transforms-3\\f26ff331fc2c927d9c8d5736409c6d80\\transformed\\media3-exoplayer-1.0.0\\res\\values-b+sr+Latn\\values-b+sr+Latn.xml",
-                    "from": {
-                        "startLines": "2,3,4,5,6,7,8,9,10",
-                        "startColumns": "4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "55,130,191,256,328,407,480,568,652",
-                        "endColumns": "74,60,64,71,78,72,87,83,74",
-                        "endOffsets": "125,186,251,323,402,475,563,647,722"
-                    },
-                    "to": {
-                        "startLines": "88,89,90,91,92,93,94,95,96",
-                        "startColumns": "4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "6816,6891,6952,7017,7089,7168,7241,7329,7413",
-                        "endColumns": "74,60,64,71,78,72,87,83,74",
-                        "endOffsets": "6886,6947,7012,7084,7163,7236,7324,7408,7483"
-                    }
-                },
-                {
-                    "source": "C:\\Users\\Owner\\.gradle\\caches\\transforms-3\\40ed7b6d4a26035a4d3928b37d7f3c5b\\transformed\\media3-ui-1.0.0\\res\\values-b+sr+Latn\\values-b+sr+Latn.xml",
+                    "source": "C:\\Users\\Owner\\.gradle\\caches\\transforms-3\\57e7524aae475ffcfead6d36c5ba1840\\transformed\\media3-ui-1.2.1\\res\\values-b+sr+Latn\\values-b+sr+Latn.xml",
                     "from": {
                         "startLines": "2,11,16,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -93,7 +76,24 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\Owner\\.gradle\\caches\\transforms-3\\5cf979a29f8b5ce12c5f16fb89c661e0\\transformed\\media3-session-1.0.0\\res\\values-b+sr+Latn\\values-b+sr+Latn.xml",
+                    "source": "C:\\Users\\Owner\\.gradle\\caches\\transforms-3\\e57add097d060d4d2422fabc662a59bf\\transformed\\media3-exoplayer-1.2.1\\res\\values-b+sr+Latn\\values-b+sr+Latn.xml",
+                    "from": {
+                        "startLines": "2,3,4,5,6,7,8,9,10",
+                        "startColumns": "4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "55,130,191,256,328,407,480,568,652",
+                        "endColumns": "74,60,64,71,78,72,87,83,74",
+                        "endOffsets": "125,186,251,323,402,475,563,647,722"
+                    },
+                    "to": {
+                        "startLines": "88,89,90,91,92,93,94,95,96",
+                        "startColumns": "4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "6816,6891,6952,7017,7089,7168,7241,7329,7413",
+                        "endColumns": "74,60,64,71,78,72,87,83,74",
+                        "endOffsets": "6886,6947,7012,7084,7163,7236,7324,7408,7483"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\Owner\\.gradle\\caches\\transforms-3\\e14c95dc5909f284dc86e30a9390b2b9\\transformed\\media3-session-1.2.1\\res\\values-b+sr+Latn\\values-b+sr+Latn.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9",
                         "startColumns": "4,4,4,4,4,4,4,4",

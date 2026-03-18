@@ -62,7 +62,7 @@
     <string name="exo_controls_cc_disabled_description">የግርጌ ጽሑፎችን አንቃ</string>
     <string name="exo_controls_cc_enabled_description">የግርጌ ጽሑፎችን አሰናክል</string>
     <string name="exo_controls_fastforward_description">በፍጥነት አሳልፍ</string>
-    <string name="exo_controls_fullscreen_enter_description">ወደ ሙሉ ማያ ገጽ ግባ</string>
+    <string name="exo_controls_fullscreen_enter_description">ወደ ሙሉ ማያ ገፅ ግባ</string>
     <string name="exo_controls_fullscreen_exit_description">ከሙሉ ማያገጽ ውጣ</string>
     <string name="exo_controls_hide">የተጫዋች መቆጣጠሪያዎችን ደብቅ</string>
     <string name="exo_controls_next_description">ቀጣይ</string>

@@ -6,8 +6,10 @@ data class Song(
     val artist: String,
     val album: String,
     val filePath: String,
-    val fileName: String, // 新增：保存真实文件名用于匹配
+    val fileName: String,
     val fileHash: String,
     val modifiedTime: Long,
-    val isFavourite: Boolean = false
+    val isFavourite: Boolean = false,
+    val isDirty: Boolean = false,
+    val favLastUpdated: Long = 0 // 新增：记录收藏状态最后一次改变的时间
 )

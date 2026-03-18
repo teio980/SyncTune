@@ -48,41 +48,57 @@
     </com.google.android.material.card.MaterialCardView>
 
     <!-- 歌曲信息区 -->
-    <LinearLayout
+    <RelativeLayout
         android:id="@+id/layout_song_info"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="32dp"
         android:layout_marginTop="40dp"
-        android:orientation="vertical"
         app:layout_constraintTop_toBottomOf="@id/card_album_art">
 
-        <TextView
-            android:id="@+id/tv_player_title"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:ellipsize="marquee"
-            android:focusable="true"
-            android:focusableInTouchMode="true"
-            android:marqueeRepeatLimit="marquee_forever"
-            android:singleLine="true"
-            android:text="歌曲名称"
-            android:textColor="@color/white"
-            android:textSize="24sp"
-            android:textStyle="bold" />
+            android:layout_toStartOf="@id/btn_player_favourite"
+            android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tv_player_artist_album"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:alpha="0.7"
-            android:ellipsize="end"
-            android:singleLine="true"
-            android:text="歌手名称 - 专辑名称"
-            android:textColor="@color/white"
-            android:textSize="16sp" />
-    </LinearLayout>
+            <TextView
+                android:id="@+id/tv_player_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="marquee"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:singleLine="true"
+                android:text="歌曲名称"
+                android:textColor="@color/white"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_player_artist_album"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:alpha="0.7"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="歌手名称 - 专辑名称"
+                android:textColor="@color/white"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/btn_player_favourite"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_heart"
+            app:tint="@color/white" />
+    </RelativeLayout>
 
     <!-- 进度条区 -->
     <SeekBar

@@ -3,6 +3,7 @@ package com.example.synctune.player
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Bundle
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.CommandButton
@@ -44,6 +45,20 @@ class PlaybackService : MediaSessionService() {
             .build()
 
         player.addListener(object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                // 当媒体项切换时，强制更新自定义布局以触发通知刷新
+                updateCustomLayout()
+            }
+
+            override fun onEvents(player: Player, events: Player.Events) {
+                // 监听元数据或播放状态变化
+                if (events.contains(Player.EVENT_MEDIA_METADATA_CHANGED) || 
+                    events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) ||
+                    events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)) {
+                    updateCustomLayout()
+                }
+            }
+
             override fun onRepeatModeChanged(repeatMode: Int) {
                 updateCustomLayout()
             }
@@ -56,7 +71,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun updateCustomLayout() {
-        val player = mediaSession?.player ?: return
+        val session = mediaSession ?: return
+        val player = session.player
         
         val (iconRes, label) = when {
             player.shuffleModeEnabled -> {
@@ -77,7 +93,14 @@ class PlaybackService : MediaSessionService() {
             .setEnabled(true)
             .build()
 
-        mediaSession?.setCustomLayout(listOf(playbackModeButton))
+        session.setCustomLayout(listOf(playbackModeButton))
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val player = mediaSession?.player
+        if (player == null || !player.playWhenReady || player.playbackState == Player.STATE_IDLE) {
+            stopSelf()
+        }
     }
 
     private inner class CustomMediaSessionCallback : MediaSession.Callback {
@@ -139,7 +162,6 @@ class PlaybackService : MediaSessionService() {
             release()
             mediaSession = null
         }
-        // 关键：统一由 PlayerManager 释放并重置单例，解决冷启动和二次启动失效问题
         PlayerManager.releasePlayer()
         super.onDestroy()
     }

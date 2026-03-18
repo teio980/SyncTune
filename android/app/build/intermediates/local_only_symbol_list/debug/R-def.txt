@@ -4,6 +4,7 @@ anim btn_click
 anim item_animation_fall_down
 anim layout_animation_fall_down
 anim no_anim
+anim rotate
 anim slide_down
 anim slide_up
 color black
@@ -25,6 +26,7 @@ drawable ic_launcher_foreground
 drawable ic_music_note
 drawable ic_pause
 drawable ic_play
+drawable ic_playlist_add
 drawable ic_repeat
 drawable ic_repeat_one
 drawable ic_shuffle
@@ -37,6 +39,7 @@ id btn_close
 id btn_delete_selected
 id btn_disconnect
 id btn_download
+id btn_edit_selected
 id btn_favourite
 id btn_next
 id btn_play_pause
@@ -67,6 +70,7 @@ id et_webdav_user
 id fragment_container
 id iv_album_art
 id iv_playing_indicator
+id iv_scan_icon
 id iv_song_album_art
 id layout_song_info
 id ll_info
@@ -90,6 +94,7 @@ id progress_bar
 id recycler_view_songs
 id rl_header
 id rv_songs
+id scan_progress
 id switch_auto_sync
 id tab_layout_library
 id til_search
@@ -104,6 +109,7 @@ id tv_player_artist_album
 id tv_player_title
 id tv_progress_count
 id tv_progress_file
+id tv_progress_size
 id tv_progress_status
 id tv_selection_count
 id tv_settings_title

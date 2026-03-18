@@ -1,0 +1,3 @@
+com.example.synctune.test
+style WhiteBackgroundDialogTheme
+style WhiteBackgroundTheme

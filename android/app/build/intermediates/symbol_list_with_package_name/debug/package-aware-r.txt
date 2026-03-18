@@ -45,6 +45,7 @@ anim mtrl_bottom_sheet_slide_in
 anim mtrl_bottom_sheet_slide_out
 anim mtrl_card_lowers_interpolator
 anim no_anim
+anim rotate
 anim slide_down
 anim slide_up
 animator design_appbar_state_list_animator
@@ -2911,6 +2912,7 @@ drawable ic_mtrl_chip_close_circle
 drawable ic_music_note
 drawable ic_pause
 drawable ic_play
+drawable ic_playlist_add
 drawable ic_repeat
 drawable ic_repeat_one
 drawable ic_search_black_24
@@ -3107,6 +3109,7 @@ id btn_close
 id btn_delete_selected
 id btn_disconnect
 id btn_download
+id btn_edit_selected
 id btn_favourite
 id btn_next
 id btn_play_pause
@@ -3320,6 +3323,7 @@ id italic
 id item_touch_helper_previous_elevation
 id iv_album_art
 id iv_playing_indicator
+id iv_scan_icon
 id iv_song_album_art
 id jumpToEnd
 id jumpToStart
@@ -3475,6 +3479,7 @@ id save_non_transition_alpha
 id save_overlay_view
 id sawtooth
 id scale
+id scan_progress
 id screen
 id scroll
 id scrollIndicatorDown
@@ -3610,6 +3615,7 @@ id tv_player_artist_album
 id tv_player_title
 id tv_progress_count
 id tv_progress_file
+id tv_progress_size
 id tv_progress_status
 id tv_selection_count
 id tv_settings_title

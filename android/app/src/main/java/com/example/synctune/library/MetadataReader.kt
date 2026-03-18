@@ -22,6 +22,7 @@ class MetadataReader {
 
             val documentFile = DocumentFile.fromSingleUri(context, uri)
             val fileName = documentFile?.name ?: "Unknown"
+            val fileSize = documentFile?.length() ?: 0L
             
             val title = if (titleFromTag.isNullOrBlank()) {
                 if (fileName.contains('.')) fileName.substringBeforeLast('.') else fileName
@@ -30,8 +31,8 @@ class MetadataReader {
             val artist = if (artistFromTag.isNullOrBlank()) "Unknown Artist" else artistFromTag
             val album = if (albumFromTag.isNullOrBlank()) "Unknown Album" else albumFromTag
 
-            // 对于 URI，我们尝试获取文件大小或最后修改时间作为哈希的一部分，或者读取部分内容
-            val fileHash = getUriHash(context, uri)
+            // 核心修复：获取跨设备稳定的 Hash
+            val fileHash = getUriHash(context, uri, fileName, fileSize)
 
             return Song(
                 title = title,
@@ -49,31 +50,30 @@ class MetadataReader {
         }
     }
 
-    private fun getUriHash(context: Context, uri: Uri): String {
+    private fun getUriHash(context: Context, uri: Uri, fileName: String, fileSize: Long): String {
         val md = MessageDigest.getInstance("MD5")
         try {
             context.contentResolver.openInputStream(uri)?.use { inputStream ->
                 val dataBytes = ByteArray(1024)
                 var nread: Int
-                // 只读取前 8KB 进行哈希以保证性能，或者根据需要调整
                 var totalRead = 0
                 while (inputStream.read(dataBytes).also { nread = it } != -1 && totalRead < 8192) {
                     md.update(dataBytes, 0, nread)
                     totalRead += nread
                 }
             }
+            val mdbytes = md.digest()
+            val sb = StringBuilder()
+            for (i in mdbytes.indices) {
+                sb.append(Integer.toString((mdbytes[i].toInt() and 0xff) + 0x100, 16).substring(1))
+            }
+            return sb.toString()
         } catch (e: Exception) {
-            return uri.toString().hashCode().toString()
+            // 如果读取失败，改用 文件名 + 大小 的组合 Hash，这在多端是唯一的
+            return "fallback_${fileName}_${fileSize}".hashCode().toString()
         }
-        val mdbytes = md.digest()
-        val sb = StringBuilder()
-        for (i in mdbytes.indices) {
-            sb.append(Integer.toString((mdbytes[i].toInt() and 0xff) + 0x100, 16).substring(1))
-        }
-        return sb.toString()
     }
     
-    // 保留旧的 File 方法以防万一，但内部转为 URI 处理
     fun readMetadata(context: Context, file: File): Song? {
         return readMetadata(context, Uri.fromFile(file))
     }

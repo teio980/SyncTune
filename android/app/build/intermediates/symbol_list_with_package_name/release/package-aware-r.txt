@@ -142,6 +142,7 @@ attr applyMotionScene
 attr arcMode
 attr arrowHeadLength
 attr arrowShaftLength
+attr artwork_display_mode
 attr attributeName
 attr autoCompleteMode
 attr autoCompleteTextViewStyle
@@ -2897,6 +2898,9 @@ drawable ic_clear_black_24
 drawable ic_clock_black_24dp
 drawable ic_heart
 drawable ic_keyboard_black_24dp
+drawable ic_launcher
+drawable ic_launcher_background
+drawable ic_launcher_foreground
 drawable ic_m3_chip_check
 drawable ic_m3_chip_checked_circle
 drawable ic_m3_chip_close
@@ -3106,11 +3110,13 @@ id btn_download
 id btn_favourite
 id btn_next
 id btn_play_pause
+id btn_player_favourite
 id btn_prev
 id btn_repeat
 id btn_save_config
 id btn_scan_container
 id btn_scan_text
+id btn_search
 id btn_shuffle
 id btn_sort
 id btn_test_connection
@@ -3205,6 +3211,7 @@ id endToStart
 id end_padder
 id enterAlways
 id enterAlwaysCollapsed
+id et_search
 id et_webdav_pass
 id et_webdav_url
 id et_webdav_user
@@ -3575,6 +3582,7 @@ id textinput_placeholder
 id textinput_prefix_text
 id textinput_suffix_text
 id texture_view
+id til_search
 id time
 id title
 id titleDividerNoCustom
@@ -4089,6 +4097,7 @@ string path_password_strike_through
 string path_set
 string scan_complete
 string scan_local_songs
+string search_hint
 string search_menu_title
 string searchbar_scrolling_view_behavior
 string searchview_clear_text_content_description
@@ -5362,7 +5371,7 @@ styleable NavigationView android_layout_gravity android_background android_fitsS
 styleable OnClick clickAction targetId
 styleable OnSwipe autoCompleteMode dragDirection dragScale dragThreshold limitBoundsTo maxAcceleration maxVelocity moveWhenScrollAtTop nestedScrollFlags onTouchUp rotationCenterId springBoundary springDamping springMass springStiffness springStopThreshold touchAnchorId touchAnchorSide touchRegionId
 styleable PlayerControlView ad_marker_color ad_marker_width animation_enabled bar_gravity bar_height buffered_color controller_layout_id played_ad_marker_color played_color repeat_toggle_modes scrubber_color scrubber_disabled_size scrubber_dragged_size scrubber_drawable scrubber_enabled_size show_fastforward_button show_next_button show_previous_button show_rewind_button show_shuffle_button show_subtitle_button show_timeout show_vr_button time_bar_min_update_interval touch_target_height unplayed_color
-styleable PlayerView ad_marker_color ad_marker_width animation_enabled auto_show bar_gravity bar_height buffered_color controller_layout_id default_artwork hide_during_ads hide_on_touch keep_content_on_player_reset played_ad_marker_color played_color player_layout_id repeat_toggle_modes resize_mode scrubber_color scrubber_disabled_size scrubber_dragged_size scrubber_drawable scrubber_enabled_size show_buffering show_shuffle_button show_subtitle_button show_timeout show_vr_button shutter_background_color surface_type time_bar_min_update_interval touch_target_height unplayed_color use_artwork use_controller
+styleable PlayerView ad_marker_color ad_marker_width animation_enabled artwork_display_mode auto_show bar_gravity bar_height buffered_color controller_layout_id default_artwork hide_during_ads hide_on_touch keep_content_on_player_reset played_ad_marker_color played_color player_layout_id repeat_toggle_modes resize_mode scrubber_color scrubber_disabled_size scrubber_dragged_size scrubber_drawable scrubber_enabled_size show_buffering show_shuffle_button show_subtitle_button show_timeout show_vr_button shutter_background_color surface_type time_bar_min_update_interval touch_target_height unplayed_color use_artwork use_controller
 styleable PopupWindow android_popupBackground android_popupAnimationStyle overlapAnchor
 styleable PopupWindowBackgroundState state_above_anchor
 styleable PropertySet android_visibility android_alpha layout_constraintTag motionProgress visibilityMode

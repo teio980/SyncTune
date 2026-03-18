@@ -59,13 +59,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // 移除 R.id.fragment_container 的 paddingTop，改由各个 Fragment 内部处理，
-        // 或者如果需要全局处理，确保背景色统一。这里为了消除黑边，
-        // 我们将沉浸式边距应用在根布局或确保背景色一致。
         val rootLayout = findViewById<View>(R.id.fragment_container).parent as View
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            // 仅对底部导航栏应用底部边距，顶部边距根据需要处理
             navView.updatePadding(bottom = systemBars.bottom)
             insets
         }
@@ -111,8 +107,7 @@ class MainActivity : AppCompatActivity() {
         super.onStart()
         val sessionToken = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
-        controllerFuture?.addListener({
-        }, MoreExecutors.directExecutor())
+        controllerFuture?.addListener({}, MoreExecutors.directExecutor())
     }
 
     override fun onStop() {
@@ -138,8 +133,14 @@ class MainActivity : AppCompatActivity() {
         val currentFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
         if (currentFragment is NowPlayingFragment) return
 
+        // 丝滑动画配置：进入(slide_up), 退出(no_anim), 弹出进入(no_anim), 弹出退出(slide_down)
         supportFragmentManager.beginTransaction()
-            .setCustomAnimations(R.anim.slide_up, R.anim.no_anim, R.anim.no_anim, R.anim.slide_down)
+            .setCustomAnimations(
+                R.anim.slide_up,    // enter: 新 Fragment 进入时的动画
+                R.anim.no_anim,     // exit: 旧 Fragment 退出时的动画
+                R.anim.no_anim,     // popEnter: 返回时，旧 Fragment 重新进入的动画
+                R.anim.slide_down   // popExit: 返回时，当前 Fragment 退出时的动画
+            )
             .replace(R.id.fragment_container, NowPlayingFragment())
             .addToBackStack("now_playing")
             .commit()
@@ -206,23 +207,37 @@ class MainActivity : AppCompatActivity() {
     private fun setupPlayerListener(player: Player) {
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                updateMiniPlayerUI(mediaItem)
+                runOnUiThread { updateMiniPlayerUI(mediaItem) }
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                updatePlayPauseIcon(isPlaying)
+                runOnUiThread { updatePlayPauseIcon(isPlaying) }
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                runOnUiThread {
+                    if (playbackState == Player.STATE_IDLE || player.mediaItemCount == 0) {
+                        miniPlayerCard?.visibility = View.GONE
+                    } else if (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING) {
+                        val currentFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
+                        if (currentFragment !is NowPlayingFragment) {
+                            updateMiniPlayerUI(player.currentMediaItem)
+                        }
+                    }
+                }
             }
         })
     }
 
     private fun updateMiniPlayerUI(mediaItem: MediaItem?) {
-        if (mediaItem == null) {
+        val currentFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
+        
+        if (mediaItem == null || currentFragment is NowPlayingFragment) {
             miniPlayerCard?.visibility = View.GONE
             return
         }
         
-        val currentFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
-        miniPlayerCard?.visibility = if (currentFragment is NowPlayingFragment) View.GONE else View.VISIBLE
+        miniPlayerCard?.visibility = View.VISIBLE
         
         val metadata = mediaItem.mediaMetadata
         miniTvTitle?.text = metadata.title ?: "Unknown Title"
@@ -230,7 +245,6 @@ class MainActivity : AppCompatActivity() {
 
         val bitmap = getAlbumArt(mediaItem) ?: getDefaultBitmap()
         miniIvAlbumArt?.setImageBitmap(bitmap)
-        miniIvAlbumArt?.startAnimation(AnimationUtils.loadAnimation(this, android.R.anim.fade_in))
         updateMiniPlayerBackground(bitmap)
     }
 
@@ -296,8 +310,9 @@ class MainActivity : AppCompatActivity() {
         val visibility = if (visible) View.VISIBLE else View.GONE
         navView.visibility = visibility
         
-        if (visible && PlayerManager.getPlayer(this).currentMediaItem != null) {
-            miniPlayerCard?.visibility = View.VISIBLE
+        val player = PlayerManager.getPlayer(this)
+        if (visible) {
+            updateMiniPlayerUI(player.currentMediaItem)
         } else {
             miniPlayerCard?.visibility = View.GONE
         }
