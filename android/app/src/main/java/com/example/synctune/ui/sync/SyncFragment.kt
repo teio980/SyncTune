@@ -1,7 +1,5 @@
 package com.example.synctune.ui.sync
 
-import android.content.Context
-import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -9,14 +7,12 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
-import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
 import androidx.work.*
 import com.example.synctune.R
 import com.example.synctune.library.SongDao
-import com.example.synctune.sync.AudioFileValidator
 import com.example.synctune.sync.SyncManager
 import com.example.synctune.sync.SyncWorker
 import com.example.synctune.sync.WebDAVHelper
@@ -38,9 +34,7 @@ class SyncFragment : Fragment() {
     private lateinit var tvLocalCount: TextView
     private lateinit var tvCloudCount: TextView
     private lateinit var tvLastSync: TextView
-    private lateinit var btnUpload: Button
-    private lateinit var btnDownload: Button
-    private lateinit var btnTwoWay: Button
+    private lateinit var btnSyncNow: Button
 
     private lateinit var cardProgress: MaterialCardView
     private lateinit var tvProgressStatus: TextView
@@ -70,9 +64,7 @@ class SyncFragment : Fragment() {
         tvLocalCount = view.findViewById(R.id.tv_local_count)
         tvCloudCount = view.findViewById(R.id.tv_cloud_count)
         tvLastSync = view.findViewById(R.id.tv_last_sync)
-        btnUpload = view.findViewById(R.id.btn_upload)
-        btnDownload = view.findViewById(R.id.btn_download)
-        btnTwoWay = view.findViewById(R.id.btn_two_way_sync)
+        btnSyncNow = view.findViewById(R.id.btn_sync_now)
 
         cardProgress = view.findViewById(R.id.card_progress)
         tvProgressStatus = view.findViewById(R.id.tv_progress_status)
@@ -81,9 +73,7 @@ class SyncFragment : Fragment() {
         tvProgressCount = view.findViewById(R.id.tv_progress_count)
         tvProgressSize = view.findViewById(R.id.tv_progress_size)
 
-        btnUpload.setOnClickListener { performSync("UPLOAD") }
-        btnDownload.setOnClickListener { performSync("DOWNLOAD") }
-        btnTwoWay.setOnClickListener { performSync("TWO_WAY") }
+        btnSyncNow.setOnClickListener { performSync() }
     }
 
     private fun setupHelper() {
@@ -151,7 +141,6 @@ class SyncFragment : Fragment() {
                             progressBar.max = total
                             progressBar.progress = current
                             
-                            // 这里是关键：显示 当前MB / 总共MB
                             if (totalSize != "0") {
                                 tvProgressSize.text = "$currentSize / $totalSize MB"
                             } else {
@@ -177,16 +166,14 @@ class SyncFragment : Fragment() {
             })
     }
 
-    private fun performSync(type: String) {
+    private fun performSync() {
         if (!syncManager.isWebDAVConfigured()) {
             Toast.makeText(requireContext(), R.string.status_disconnected, Toast.LENGTH_SHORT).show()
             return
         }
 
-        val data = Data.Builder().putString("sync_type", type).build()
         val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
         val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setInputData(data)
             .setConstraints(constraints)
             .addTag("music_sync")
             .build()
@@ -197,20 +184,6 @@ class SyncFragment : Fragment() {
 
     private fun setLoading(loading: Boolean) {
         cardProgress.visibility = if (loading) View.VISIBLE else View.GONE
-        btnUpload.isEnabled = !loading
-        btnDownload.isEnabled = !loading
-        btnTwoWay.isEnabled = !loading
-    }
-
-    private fun getLocalAudioFiles(): List<DocumentFile> {
-        val prefs = requireActivity().getSharedPreferences("SyncTunePrefs", Context.MODE_PRIVATE)
-        val savedUriString = prefs.getString("music_directory_uri", null) ?: return emptyList()
-        val rootDoc = DocumentFile.fromTreeUri(requireContext(), Uri.parse(savedUriString)) ?: return emptyList()
-        val result = mutableListOf<DocumentFile>()
-        fun scan(dir: DocumentFile) {
-            dir.listFiles().forEach { file -> if (file.isDirectory) scan(file) else if (AudioFileValidator.isAudioFile(file.name)) result.add(file) }
-        }
-        scan(rootDoc)
-        return result
+        btnSyncNow.isEnabled = !loading
     }
 }

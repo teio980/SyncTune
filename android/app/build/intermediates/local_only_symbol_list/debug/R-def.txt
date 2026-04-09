@@ -38,7 +38,6 @@ id btn_cancel_selection
 id btn_close
 id btn_delete_selected
 id btn_disconnect
-id btn_download
 id btn_edit_selected
 id btn_favourite
 id btn_next
@@ -52,9 +51,8 @@ id btn_scan_text
 id btn_search
 id btn_shuffle
 id btn_sort
+id btn_sync_now
 id btn_test_connection
-id btn_two_way_sync
-id btn_upload
 id card_album_art
 id card_auto_sync
 id card_path
@@ -133,6 +131,7 @@ string btn_disconnect
 string btn_download
 string btn_keep_cloud
 string btn_save_config
+string btn_sync_now
 string btn_test_connection
 string btn_two_way_sync
 string btn_upload

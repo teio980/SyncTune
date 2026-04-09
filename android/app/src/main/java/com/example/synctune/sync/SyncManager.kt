@@ -9,7 +9,6 @@ class SyncManager(private val context: Context) {
 
     private val sharedPreferences: SharedPreferences = context.getSharedPreferences("SyncSettings", Context.MODE_PRIVATE)
 
-    // General Sync Settings
     fun setSyncEnabled(enabled: Boolean) {
         sharedPreferences.edit().putBoolean("sync_enabled", enabled).apply()
         if (enabled && isAutoSyncEnabled()) {
@@ -38,7 +37,6 @@ class SyncManager(private val context: Context) {
 
     fun getLastSyncTime(): Long = sharedPreferences.getLong("last_sync_time", 0L)
 
-    // WebDAV Configuration
     fun saveWebDAVConfig(url: String, user: String, pass: String) {
         sharedPreferences.edit()
             .putString("webdav_url", url)
@@ -63,14 +61,20 @@ class SyncManager(private val context: Context) {
         cancelPeriodicSync()
     }
 
-    fun startImmediateSync(syncType: String = "TWO_WAY") {
+    fun startImmediateSync(syncType: String? = null) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
+        val inputData = if (syncType != null) {
+            workDataOf("sync_type" to syncType)
+        } else {
+            Data.EMPTY
+        }
+
         val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
             .setConstraints(constraints)
-            .setInputData(workDataOf("sync_type" to syncType))
+            .setInputData(inputData)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
 
@@ -83,13 +87,12 @@ class SyncManager(private val context: Context) {
 
     private fun schedulePeriodicSync() {
         val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.UNMETERED) // Default to WiFi for background sync
+            .setRequiredNetworkType(NetworkType.UNMETERED)
             .setRequiresBatteryNotLow(true)
             .build()
 
         val periodicSyncRequest = PeriodicWorkRequestBuilder<SyncWorker>(1, TimeUnit.HOURS)
             .setConstraints(constraints)
-            .setInputData(workDataOf("sync_type" to "TWO_WAY"))
             .build()
 
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(

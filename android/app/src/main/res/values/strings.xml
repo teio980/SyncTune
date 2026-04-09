@@ -36,6 +36,7 @@
     <string name="btn_upload">Upload Music</string>
     <string name="btn_download">Download Music</string>
     <string name="btn_two_way_sync">Two-way Sync</string>
+    <string name="btn_sync_now">Sync Now</string>
 
     <!-- Sync Progress -->
     <string name="syncing_music">Syncing music...</string>

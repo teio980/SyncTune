@@ -28,6 +28,7 @@ import androidx.media3.session.SessionToken
 import androidx.palette.graphics.Palette
 import androidx.work.*
 import com.example.synctune.R
+import com.example.synctune.library.SongDao
 import com.example.synctune.player.PlaybackService
 import com.example.synctune.player.PlayerManager
 import com.example.synctune.sync.SyncManager
@@ -53,11 +54,14 @@ class MainActivity : AppCompatActivity() {
     private var miniBtnPrev: ImageButton? = null
     
     private var controllerFuture: ListenableFuture<MediaController>? = null
+    private lateinit var songDao: SongDao
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        songDao = SongDao(this)
 
         val rootLayout = findViewById<View>(R.id.fragment_container).parent as View
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { v, insets ->
@@ -133,13 +137,12 @@ class MainActivity : AppCompatActivity() {
         val currentFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
         if (currentFragment is NowPlayingFragment) return
 
-        // 丝滑动画配置：进入(slide_up), 退出(no_anim), 弹出进入(no_anim), 弹出退出(slide_down)
         supportFragmentManager.beginTransaction()
             .setCustomAnimations(
-                R.anim.slide_up,    // enter: 新 Fragment 进入时的动画
-                R.anim.no_anim,     // exit: 旧 Fragment 退出时的动画
-                R.anim.no_anim,     // popEnter: 返回时，旧 Fragment 重新进入的动画
-                R.anim.slide_down   // popExit: 返回时，当前 Fragment 退出时的动画
+                R.anim.slide_up,
+                R.anim.no_anim,
+                R.anim.no_anim,
+                R.anim.slide_down
             )
             .replace(R.id.fragment_container, NowPlayingFragment())
             .addToBackStack("now_playing")
@@ -216,28 +219,29 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 runOnUiThread {
-                    if (playbackState == Player.STATE_IDLE || player.mediaItemCount == 0) {
-                        miniPlayerCard?.visibility = View.GONE
-                    } else if (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING) {
-                        val currentFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
-                        if (currentFragment !is NowPlayingFragment) {
-                            updateMiniPlayerUI(player.currentMediaItem)
-                        }
-                    }
+                    updateMiniPlayerVisibility()
                 }
             }
         })
     }
 
-    private fun updateMiniPlayerUI(mediaItem: MediaItem?) {
+    private fun updateMiniPlayerVisibility() {
+        val player = PlayerManager.getPlayer(this)
         val currentFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
         
-        if (mediaItem == null || currentFragment is NowPlayingFragment) {
-            miniPlayerCard?.visibility = View.GONE
-            return
-        }
+        val shouldShow = currentFragment !is NowPlayingFragment && 
+                         player.mediaItemCount > 0 && 
+                         player.playbackState != Player.STATE_IDLE
         
-        miniPlayerCard?.visibility = View.VISIBLE
+        miniPlayerCard?.visibility = if (shouldShow) View.VISIBLE else View.GONE
+        
+        if (shouldShow) {
+            updateMiniPlayerUI(player.currentMediaItem)
+        }
+    }
+
+    private fun updateMiniPlayerUI(mediaItem: MediaItem?) {
+        if (mediaItem == null) return
         
         val metadata = mediaItem.mediaMetadata
         miniTvTitle?.text = metadata.title ?: "Unknown Title"
@@ -307,15 +311,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setMainControlsVisibility(visible: Boolean) {
-        val visibility = if (visible) View.VISIBLE else View.GONE
-        navView.visibility = visibility
-        
-        val player = PlayerManager.getPlayer(this)
-        if (visible) {
-            updateMiniPlayerUI(player.currentMediaItem)
-        } else {
-            miniPlayerCard?.visibility = View.GONE
-        }
+        navView.visibility = if (visible) View.VISIBLE else View.GONE
+        updateMiniPlayerVisibility()
     }
 
     private fun loadFragment(fragment: Fragment, animate: Boolean = true) {
