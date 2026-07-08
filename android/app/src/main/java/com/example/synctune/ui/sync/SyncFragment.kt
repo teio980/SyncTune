@@ -1,5 +1,8 @@
 package com.example.synctune.ui.sync
 
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -7,14 +10,17 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
+import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
-import androidx.work.*
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import com.example.synctune.R
 import com.example.synctune.library.SongDao
 import com.example.synctune.sync.SyncManager
-import com.example.synctune.sync.SyncWorker
 import com.example.synctune.sync.WebDAVHelper
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.progressindicator.LinearProgressIndicator
@@ -35,6 +41,8 @@ class SyncFragment : Fragment() {
     private lateinit var tvCloudCount: TextView
     private lateinit var tvLastSync: TextView
     private lateinit var btnSyncNow: Button
+    private lateinit var btnUploadFile: Button
+    private lateinit var btnDeleteCloudSongs: Button
 
     private lateinit var cardProgress: MaterialCardView
     private lateinit var tvProgressStatus: TextView
@@ -42,6 +50,15 @@ class SyncFragment : Fragment() {
     private lateinit var progressBar: LinearProgressIndicator
     private lateinit var tvProgressCount: TextView
     private lateinit var tvProgressSize: TextView
+
+    private val pickAudioLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri: Uri? = result.data?.data
+            uri?.let { uploadSelectedFile(it) }
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -65,6 +82,8 @@ class SyncFragment : Fragment() {
         tvCloudCount = view.findViewById(R.id.tv_cloud_count)
         tvLastSync = view.findViewById(R.id.tv_last_sync)
         btnSyncNow = view.findViewById(R.id.btn_sync_now)
+        btnUploadFile = view.findViewById(R.id.btn_upload_file)
+        btnDeleteCloudSongs = view.findViewById(R.id.btn_delete_cloud_songs)
 
         cardProgress = view.findViewById(R.id.card_progress)
         tvProgressStatus = view.findViewById(R.id.tv_progress_status)
@@ -74,6 +93,14 @@ class SyncFragment : Fragment() {
         tvProgressSize = view.findViewById(R.id.tv_progress_size)
 
         btnSyncNow.setOnClickListener { performSync() }
+        btnUploadFile.setOnClickListener {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "audio/*"
+            }
+            pickAudioLauncher.launch(intent)
+        }
+        btnDeleteCloudSongs.setOnClickListener { showCloudSongsDeleteDialog() }
     }
 
     private fun setupHelper() {
@@ -115,7 +142,7 @@ class SyncFragment : Fragment() {
 
     private fun observeSyncProgress() {
         WorkManager.getInstance(requireContext())
-            .getWorkInfosForUniqueWorkLiveData("music_sync")
+            .getWorkInfosForUniqueWorkLiveData(SyncManager.UNIQUE_SYNC_WORK_NAME)
             .observe(viewLifecycleOwner, Observer { workInfos ->
                 if (workInfos.isNullOrEmpty()) return@Observer
                 
@@ -172,18 +199,115 @@ class SyncFragment : Fragment() {
             return
         }
 
-        val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-        val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setConstraints(constraints)
-            .addTag("music_sync")
-            .build()
+        syncManager.startSyncNow()
+    }
 
-        WorkManager.getInstance(requireContext())
-            .enqueueUniqueWork("music_sync", ExistingWorkPolicy.REPLACE, syncRequest)
+    private fun uploadSelectedFile(uri: Uri) {
+        val documentFile = DocumentFile.fromSingleUri(requireContext(), uri) ?: return
+        if (webDAVHelper == null) {
+            Toast.makeText(requireContext(), R.string.status_disconnected, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val totalSize = documentFile.length()
+        val totalSizeMb = String.format(Locale.US, "%.1f", totalSize / (1024.0 * 1024.0))
+
+        setLoading(true)
+        tvProgressStatus.text = getString(R.string.uploading)
+        tvProgressFile.text = documentFile.name
+        tvProgressCount.text = "1 / 1"
+        progressBar.isIndeterminate = false
+        progressBar.max = 100
+        progressBar.progress = 0
+        
+        lifecycleScope.launch {
+            val result = webDAVHelper?.uploadFile(requireContext(), documentFile) { bytesWritten ->
+                withContext(Dispatchers.Main) {
+                    val currentMb = String.format(Locale.US, "%.1f", bytesWritten / (1024.0 * 1024.0))
+                    tvProgressSize.text = "$currentMb / $totalSizeMb MB"
+                    if (totalSize > 0) {
+                        progressBar.progress = ((bytesWritten * 100) / totalSize).toInt()
+                    }
+                }
+            }
+            setLoading(false)
+            if (result?.isSuccess == true) {
+                Toast.makeText(requireContext(), "Upload Successful", Toast.LENGTH_SHORT).show()
+                updateStatusUi()
+            } else {
+                val error = result?.exceptionOrNull()?.message ?: "Unknown error"
+                Toast.makeText(requireContext(), "Upload Failed: $error", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun showCloudSongsDeleteDialog() {
+        if (webDAVHelper == null) {
+            Toast.makeText(requireContext(), R.string.status_disconnected, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        setLoading(true)
+        lifecycleScope.launch {
+            val result = webDAVHelper?.listRemoteFiles()
+            setLoading(false)
+            if (result?.isSuccess == true) {
+                val files = result.getOrThrow()
+                    .sortedByDescending { it.modifiedDate } // 按修改时间从新到旧排序
+
+                if (files.isEmpty()) {
+                    Toast.makeText(requireContext(), R.string.no_cloud_songs, Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                val fileNames = files.map { it.name }.toTypedArray()
+                val selectedItems = BooleanArray(fileNames.size) { false }
+                
+                AlertDialog.Builder(requireContext(), R.style.Theme_SyncTune_AlertDialog)
+                    .setTitle(R.string.delete_cloud_title)
+                    .setMultiChoiceItems(fileNames, selectedItems) { _, which, isChecked ->
+                        selectedItems[which] = isChecked
+                    }
+                    .setPositiveButton(R.string.delete_confirm) { _, _ ->
+                        val toDelete = files.filterIndexed { index, _ -> selectedItems[index] }
+                        if (toDelete.isNotEmpty()) deleteCloudSongs(toDelete.map { it.name })
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            } else {
+                Toast.makeText(requireContext(), "Failed to fetch cloud songs", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun deleteCloudSongs(fileNames: List<String>) {
+        setLoading(true)
+        tvProgressStatus.text = getString(R.string.deleting_songs)
+        progressBar.isIndeterminate = false
+        progressBar.max = fileNames.size
+        progressBar.progress = 0
+        tvProgressCount.text = "0 / ${fileNames.size}"
+        tvProgressSize.text = ""
+
+        lifecycleScope.launch {
+            var successCount = 0
+            fileNames.forEachIndexed { index, fileName ->
+                tvProgressFile.text = fileName
+                val result = webDAVHelper?.deleteFile(fileName)
+                if (result?.isSuccess == true) successCount++
+                progressBar.progress = index + 1
+                tvProgressCount.text = "${index + 1} / ${fileNames.size}"
+            }
+            setLoading(false)
+            Toast.makeText(requireContext(), "Deleted $successCount songs", Toast.LENGTH_SHORT).show()
+            updateStatusUi()
+        }
     }
 
     private fun setLoading(loading: Boolean) {
         cardProgress.visibility = if (loading) View.VISIBLE else View.GONE
         btnSyncNow.isEnabled = !loading
+        btnUploadFile.isEnabled = !loading
+        btnDeleteCloudSongs.isEnabled = !loading
     }
 }

@@ -16,3 +16,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "SyncTune"
 include(":app")
+include(":core")
+include(":data")
+include(":player")
+include(":sync")

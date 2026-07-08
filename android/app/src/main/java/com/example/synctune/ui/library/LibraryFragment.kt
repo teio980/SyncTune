@@ -4,10 +4,15 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.DocumentsContract
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.text.*
 import android.view.*
 import android.widget.*
@@ -29,13 +34,6 @@ import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.textfield.*
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.*
-import org.jaudiotagger.audio.AudioFileIO
-import org.jaudiotagger.tag.images.*
-import org.jaudiotagger.tag.reference.PictureTypes
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 
 class LibraryFragment : Fragment() {
     private lateinit var songDao: SongDao
@@ -51,7 +49,6 @@ class LibraryFragment : Fragment() {
     private val syncReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == SyncWorker.ACTION_SYNC_COMPLETED) {
-                // 当后台同步完成，立即在主线程刷新列表
                 lifecycleScope.launch(Dispatchers.Main) {
                     refresh()
                 }
@@ -67,9 +64,13 @@ class LibraryFragment : Fragment() {
         val v = inflater.inflate(R.layout.fragment_library, container, false)
         songDao = SongDao(requireContext()); syncManager = SyncManager(requireContext())
         scanProgressBar = v.findViewById(R.id.scan_progress)
-        songAdapter = SongAdapter(emptyList(), { s -> val all = songAdapter.getSongs(); PlayerManager.play(requireContext(), all, all.indexOf(s)) },
+        songAdapter = SongAdapter(emptyList(), { s -> playSongFromSearch(s) },
             { s -> showSongOptions(s) }, { s -> toggleFav(s) }, { c -> updateUI(v, c) })
-        v.findViewById<RecyclerView>(R.id.recycler_view_songs).apply { layoutManager = LinearLayoutManager(context); adapter = songAdapter; setupSwipeHandler(this) }
+        v.findViewById<RecyclerView>(R.id.recycler_view_songs).apply { 
+            layoutManager = LinearLayoutManager(context)
+            adapter = songAdapter
+            setupSwipeHandler(this) 
+        }
         v.findViewById<TabLayout>(R.id.tab_layout_library).addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(t: TabLayout.Tab?) { currentTab = t?.position ?: 0; refresh() }
             override fun onTabUnselected(t: TabLayout.Tab?) {}; override fun onTabReselected(t: TabLayout.Tab?) {}
@@ -131,159 +132,309 @@ class LibraryFragment : Fragment() {
 
     private fun updateSongCover(s: Song, uri: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val ctx = requireContext()
-                val aUri = Uri.parse(s.filePath)
-                org.jaudiotagger.tag.TagOptionSingleton.getInstance().isAndroid = true
-                
-                val extension = s.fileName.substringAfterLast(".", "mp3")
-                val tmp = File(ctx.cacheDir, "edit_${System.currentTimeMillis()}.$extension")
-                
-                ctx.contentResolver.openInputStream(aUri)?.use { i -> tmp.outputStream().use { o -> i.copyTo(o) } } ?: throw Exception("Read failed")
-                
-                val imgBytes = ctx.contentResolver.openInputStream(uri)?.readBytes() ?: throw Exception("Image read failed")
-                val af = AudioFileIO.read(tmp)
-                val tag = af.tag ?: af.createDefaultTag()
-                
-                tag.deleteArtworkField()
-                val art = ArtworkFactory.getNew()
-                art.binaryData = imgBytes
-                art.mimeType = ctx.contentResolver.getType(uri) ?: "image/jpeg"
-                art.pictureType = PictureTypes.DEFAULT_ID
-                tag.setField(art)
-                af.commit()
+            val ctx = requireContext()
+            val editor = CoverEditor(ctx)
+            val result = editor.updateCover(s, uri)
 
-                ctx.contentResolver.openFileDescriptor(aUri, "rwt")?.use { pfd ->
-                    val outChannel = FileOutputStream(pfd.fileDescriptor).channel
-                    outChannel.truncate(0) 
-                    FileInputStream(tmp).use { fis ->
-                        val inChannel = fis.channel
-                        inChannel.transferTo(0, inChannel.size(), outChannel)
-                    }
-                    outChannel.force(true)
-                } ?: throw Exception("Write back failed")
-                
-                tmp.delete()
-                
-                val upMetadata = metadataReader.readMetadata(ctx, aUri) ?: return@launch
-                val updatedSong = upMetadata.copy(
-                    id = s.id, 
-                    isFavourite = s.isFavourite, 
-                    isDirty = true, 
-                    modifiedTime = System.currentTimeMillis()
+            if (result.isSuccess) {
+                val changedAt = System.currentTimeMillis()
+                val fallbackDirtySong = s.copy(
+                    isDirty = true,
+                    modifiedTime = changedAt
                 )
-                
-                songDao.updateSong(updatedSong)
-                
-                withContext(Dispatchers.Main) { 
-                    PlayerManager.updateMediaItemMetadata(updatedSong)
+                val updatedSong = metadataReader.readMetadata(ctx, Uri.parse(s.filePath))
+                val finalSong = updatedSong?.copy(
+                    id = s.id,
+                    isFavourite = s.isFavourite,
+                    isDirty = true,
+                    modifiedTime = changedAt,
+                    favLastUpdated = s.favLastUpdated
+                ) ?: fallbackDirtySong
+
+                songDao.updateSong(finalSong)
+
+                withContext(Dispatchers.Main) {
                     songAdapter.setSelectionMode(false)
-                    
-                    val songs = songAdapter.getSongs().toMutableList()
-                    val index = songs.indexOfFirst { it.id == s.id }
-                    if (index != -1) {
-                        songs[index] = updatedSong
-                        songAdapter.updateSongs(songs)
-                        songAdapter.notifyItemChanged(index)
-                    }
-                    
+                    refresh()
                     Toast.makeText(ctx, "Cover Updated Successfully", Toast.LENGTH_SHORT).show()
-                    if (syncManager.isSyncEnabled()) syncManager.startImmediateSync("UPLOAD") 
                 }
-            } catch (e: Exception) { 
-                e.printStackTrace()
-                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show() } 
+            } else {
+                withContext(Dispatchers.Main) {
+                    val error = result.exceptionOrNull()?.message ?: "Unknown error"
+                    Toast.makeText(ctx, "Error: $error", Toast.LENGTH_LONG).show()
+                }
             }
         }
+    }
+
+    private fun toggleFav(s: Song) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val updated = s.copy(isFavourite = !s.isFavourite, favLastUpdated = System.currentTimeMillis())
+            songDao.updateSong(updated)
+            withContext(Dispatchers.Main) {
+                val songs = songAdapter.getSongs().toMutableList()
+                val idx = songs.indexOfFirst { it.id == s.id }
+                if (idx != -1) {
+                    songs[idx] = updated
+                    songAdapter.updateSongs(songs)
+                    songAdapter.notifyItemChanged(idx)
+                }
+            }
+        }
+    }
+
+    private fun deleteSongs(songs: List<Song>) {
+        AlertDialog.Builder(requireContext())
+            .setTitle("Delete Songs")
+            .setMessage("Are you sure you want to delete ${songs.size} songs from storage?")
+            .setPositiveButton("Delete") { _, _ ->
+                lifecycleScope.launch(Dispatchers.IO) {
+                    for (s in songs) {
+                        try {
+                            val uri = Uri.parse(s.filePath)
+                            DocumentFile.fromSingleUri(requireContext(), uri)?.delete()
+                            songDao.deleteSongsByIds(listOf(s.id))
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }
+                    withContext(Dispatchers.Main) {
+                        songAdapter.setSelectionMode(false)
+                        refresh()
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun scan() {
-        val rootStr = requireActivity().getSharedPreferences("SyncTunePrefs", Context.MODE_PRIVATE).getString("music_directory_uri", null) ?: return
-        val root = Uri.parse(rootStr); scanProgressBar?.visibility = View.VISIBLE; scanProgressBar?.isIndeterminate = true
+        val savedUri = syncManager.getMusicDirectoryUri()
+        if (savedUri != null) {
+            startScan(Uri.parse(savedUri))
+        } else {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            startActivityForResult(intent, 1001)
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 1001 && resultCode == android.app.Activity.RESULT_OK) {
+            data?.data?.let { uri ->
+                requireContext().contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                syncManager.setMusicDirectoryUri(uri.toString())
+                startScan(uri)
+            }
+        }
+    }
+
+    private fun startScan(treeUri: Uri) {
+        scanProgressBar?.visibility = View.VISIBLE
         lifecycleScope.launch(Dispatchers.IO) {
-            val local = listFiles(requireContext(), root); val db = songDao.getAllSongsSorted().associateBy { it.filePath }
-            val toProc = local.filter { it.mod > (db[it.uri.toString()]?.modifiedTime ?: 0L) }
-            if (toProc.isNotEmpty()) {
-                withContext(Dispatchers.Main) { scanProgressBar?.apply { isIndeterminate = false; max = toProc.size; progress = 0 } }
-                val sem = Semaphore(4); coroutineScope { toProc.mapIndexed { i, f -> async { sem.withPermit {
-                    metadataReader.readMetadata(requireContext(), f.uri)?.let { s -> 
-                        val ex = db[f.uri.toString()]
-                        if (ex != null) songDao.updateSong(s.copy(id = ex.id, isFavourite = ex.isFavourite, isDirty = false)) 
-                        else songDao.insertSong(s.copy(isDirty = false)) 
+            val rootDoc = DocumentFile.fromTreeUri(requireContext(), treeUri)
+            if (rootDoc == null || !rootDoc.exists() || !rootDoc.isDirectory) {
+                withContext(Dispatchers.Main) {
+                    scanProgressBar?.visibility = View.GONE
+                    Toast.makeText(requireContext(), "Cannot access directory", Toast.LENGTH_SHORT).show()
+                }
+                return@launch
+            }
+
+            val audioFiles = mutableListOf<DocumentFile>()
+            collectAudioFiles(rootDoc, audioFiles)
+
+            val total = audioFiles.size
+            if (total == 0) {
+                withContext(Dispatchers.Main) {
+                    scanProgressBar?.visibility = View.GONE
+                    Toast.makeText(requireContext(), "No music files found", Toast.LENGTH_SHORT).show()
+                }
+                return@launch
+            }
+
+            val existingSongs = songDao.getAllSongs().associateBy { it.filePath }
+
+            var processed = 0
+            var changed = 0
+            val scannedPaths = mutableSetOf<String>()
+
+            for (doc in audioFiles) {
+                val uriStr = doc.uri.toString()
+                scannedPaths.add(uriStr)
+                val existing = existingSongs[uriStr]
+
+                if (existing != null) {
+                    processed++
+                    if (processed % 10 == 0 || processed == total) {
+                        withContext(Dispatchers.Main) { scanProgressBar?.progress = (processed * 100) / total }
                     }
-                    if (i % 10 == 0) withContext(Dispatchers.Main) { scanProgressBar?.progress = i }
-                } } }.awaitAll() }
-            }
-            val localUris = local.map { it.uri.toString() }.toSet()
-            val toDelete = db.values.filter { !localUris.contains(it.filePath) }.map { it.id }
-            if (toDelete.isNotEmpty()) songDao.deleteSongsByIds(toDelete)
-            
-            withContext(Dispatchers.Main) { scanProgressBar?.visibility = View.GONE; refresh() }
-        }
-    }
+                    continue
+                }
 
-    private fun listFiles(ctx: Context, root: Uri): List<FInfo> {
-        val res = mutableListOf<FInfo>(); val stack = mutableListOf<String>(); stack.add(DocumentsContract.getTreeDocumentId(root))
-        while (stack.isNotEmpty()) {
-            val pid = stack.removeAt(stack.size - 1); val cur = DocumentsContract.buildChildDocumentsUriUsingTree(root, pid)
-            ctx.contentResolver.query(cur, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_LAST_MODIFIED), null, null, null)?.use { c ->
-                val idI = c.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID); val nameI = c.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-                val mimeI = c.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE); val modI = c.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
-                while (c.moveToNext()) {
-                    val id = c.getString(idI); val n = c.getString(nameI) ?: continue; val m = c.getString(mimeI)
-                    if (m == DocumentsContract.Document.MIME_TYPE_DIR) stack.add(id) else if (AudioFileValidator.isAudioFile(n) && !n.startsWith(".")) res.add(FInfo(DocumentsContract.buildDocumentUriUsingTree(root, id), c.getLong(modI)))
+                val song = metadataReader.readMetadata(requireContext(), doc.uri)
+                if (song != null) {
+                    val dup = songDao.getSongByHash(song.fileHash)
+                    if (dup == null) {
+                        songDao.insertSong(song)
+                    } else if (dup.filePath != uriStr) {
+                        songDao.updateSong(dup.copy(filePath = uriStr))
+                    }
+                    changed++
+                }
+                processed++
+                if (processed % 10 == 0 || processed == total) {
+                    withContext(Dispatchers.Main) { scanProgressBar?.progress = (processed * 100) / total }
                 }
             }
-        }
-        return res
-    }
 
-    private data class FInfo(val uri: Uri, val mod: Long)
-    private fun deleteSongs(songs: List<Song>) {
-        lifecycleScope.launch(Dispatchers.IO) { 
-            songs.forEach { s -> Uri.parse(s.filePath)?.let { DocumentFile.fromSingleUri(requireContext(), it)?.delete() } }
-            songDao.deleteSongsByIds(songs.map { it.id })
-            withContext(Dispatchers.Main) { songAdapter.setSelectionMode(false); refresh(); if (syncManager.isSyncEnabled()) syncManager.startImmediateSync("TWO_WAY") }
-        }
-    }
+            val removedPaths = existingSongs.keys - scannedPaths
+            if (removedPaths.isNotEmpty()) {
+                val removedIds = existingSongs.filterKeys { it in removedPaths }.map { it.value.id }
+                songDao.deleteSongsByIds(removedIds)
+            }
 
-    private fun toggleFav(s: Song) { 
-        lifecycleScope.launch(Dispatchers.IO) { 
-            songDao.updateFavouriteStatus(s.id, !s.isFavourite)
-            withContext(Dispatchers.Main) { 
+            withContext(Dispatchers.Main) {
+                scanProgressBar?.visibility = View.GONE
+                val msg = if (removedPaths.isNotEmpty()) "Scan done: $changed new, ${removedPaths.size} removed"
+                          else "Scan done: $changed new"
+                Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
                 refresh()
-                if (syncManager.isSyncEnabled()) {
-                    syncManager.startImmediateSync("TWO_WAY")
-                }
-            } 
-        } 
+            }
+        }
+    }
+
+    private fun collectAudioFiles(dir: DocumentFile, result: MutableList<DocumentFile>) {
+        val files = dir.listFiles()
+        for (f in files) {
+            if (f.isDirectory) {
+                collectAudioFiles(f, result)
+            } else if (f.isFile && AudioFileValidator.isAudioFile(f.name)) {
+                result.add(f)
+            }
+        }
     }
 
     private fun refresh() {
         lifecycleScope.launch(Dispatchers.IO) {
-            val order = when (currentSortOrder) { 0 -> "title"; 1 -> "artist"; else -> "date" }
-            val songs = if (currentTab == 1) songDao.getFavouriteSongs(order) else songDao.getAllSongsSorted(order)
-            val filtered = if (searchQuery.isEmpty()) songs else songs.filter { it.title.contains(searchQuery, true) || it.artist.contains(searchQuery, true) }
-            withContext(Dispatchers.Main) { songAdapter.updateSongs(filtered) }
+            val songs = when (currentTab) {
+                1 -> songDao.getFavouriteSongs()
+                else -> songDao.getAllSongs()
+            }.filter { it.title.contains(searchQuery, true) || it.artist.contains(searchQuery, true) }
+
+            val sorted = when (currentSortOrder) {
+                0 -> songs.sortedBy { it.title.lowercase() }
+                1 -> songs.sortedBy { it.artist.lowercase() }
+                else -> songs.sortedByDescending { it.modifiedTime }
+            }
+
+            withContext(Dispatchers.Main) { songAdapter.updateSongs(sorted) }
         }
     }
-    
-    private fun setupSwipeHandler(rv: RecyclerView) {
-        ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
-            override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder) = false
-            override fun onSwiped(vh: RecyclerView.ViewHolder, d: Int) {
-                val s = songAdapter.getSongs()[vh.bindingAdapterPosition]
-                toggleFav(s)
+
+    /**
+     * Play a song from search results using the FULL (unfiltered) song list as the playlist.
+     * This ensures that after the song ends, ExoPlayer auto-advances to the next song
+     * in the full library rather than being stuck in the search-filtered subset.
+     */
+    private fun playSongFromSearch(clickedSong: Song) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val fullList = when (currentTab) {
+                1 -> songDao.getFavouriteSongs()
+                else -> songDao.getAllSongs()
             }
-        }).attachToRecyclerView(rv)
+            val sorted = when (currentSortOrder) {
+                0 -> fullList.sortedBy { it.title.lowercase() }
+                1 -> fullList.sortedBy { it.artist.lowercase() }
+                else -> fullList.sortedByDescending { it.modifiedTime }
+            }
+            val index = sorted.indexOfFirst { it.fileHash == clickedSong.fileHash }
+            if (index >= 0) {
+                withContext(Dispatchers.Main) {
+                    PlayerManager.play(requireContext(), sorted, index)
+                }
+            }
+        }
     }
 
     private fun setupPlayerListener() {
         PlayerManager.getPlayer(requireContext()).addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
-                val currentUri = mediaItem?.localConfiguration?.uri?.toString()
-                songAdapter.setPlayingSongPath(currentUri)
+                syncCurrentPlayingPath()
             }
         })
+    }
+
+    private var lastSwipedPosition: Int = -1
+    private var swipeThresholdExecuted: Boolean = false
+
+    private fun setupSwipeHandler(recyclerView: RecyclerView) {
+        val swipeThresholdRatio = 0.3f // 30% width to trigger
+
+        val callback = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
+            override fun onMove(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder): Boolean = false
+
+            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
+                val position = viewHolder.bindingAdapterPosition
+                songAdapter.notifyItemChanged(position)
+                
+                if (swipeThresholdExecuted) {
+                    val song = songAdapter.getSongs()[position]
+                    PlayerManager.playNext(requireContext(), song)
+                    Toast.makeText(requireContext(), "Added to Play Next: ${song.title}", Toast.LENGTH_SHORT).show()
+                    
+                    lastSwipedPosition = -1
+                    swipeThresholdExecuted = false
+                }
+            }
+
+            override fun onChildDraw(c: Canvas, r: RecyclerView, viewHolder: RecyclerView.ViewHolder, dX: Float, dY: Float, s: Int, a: Boolean) {
+                val itemView = viewHolder.itemView
+                val screenWidth = itemView.width.toFloat()
+                val threshold = screenWidth * swipeThresholdRatio
+                
+                val p = Paint()
+
+                if (!swipeThresholdExecuted && (dX > threshold || dX < -threshold)) {
+                    swipeThresholdExecuted = true
+                    lastSwipedPosition = viewHolder.bindingAdapterPosition
+                    triggerHapticFeedback()
+                } else if (swipeThresholdExecuted && dX < threshold && dX > -threshold) {
+                    swipeThresholdExecuted = false
+                }
+
+                if (dX > 0 || dX < 0) {
+                    p.color = if (swipeThresholdExecuted) Color.parseColor("#2196F3") else Color.parseColor("#442196F3")
+                    
+                    if (dX > 0) {
+                        c.drawRect(RectF(itemView.left.toFloat(), itemView.top.toFloat(), dX, itemView.bottom.toFloat()), p)
+                    } else {
+                        c.drawRect(RectF(itemView.right.toFloat() + dX, itemView.top.toFloat(), itemView.right.toFloat(), itemView.bottom.toFloat()), p)
+                    }
+                }
+                
+                super.onChildDraw(c, r, viewHolder, dX, dY, s, a)
+            }
+
+            override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
+                super.clearView(recyclerView, viewHolder)
+                lastSwipedPosition = -1
+                swipeThresholdExecuted = false
+            }
+        }
+        ItemTouchHelper(callback).attachToRecyclerView(recyclerView)
+    }
+
+    private fun triggerHapticFeedback() {
+        try {
+            val vibrator = requireContext().getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(50)
+            }
+        } catch (e: Exception) {
+            // Ignore if vibration fails or permission is missing
+        }
     }
 }

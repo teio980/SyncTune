@@ -17,14 +17,22 @@
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/mini_player_container"
         android:layout_width="match_parent"
-        android:layout_height="72dp"
-        android:padding="6dp">
+        android:layout_height="72dp">
+
+        <!-- 背景渐变层，和大播放器逻辑一致 -->
+        <View
+            android:id="@+id/mini_background_gradient"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent" />
 
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/mini_album_art_card"
-            android:layout_width="60dp"
-            android:layout_height="60dp"
-            app:cardCornerRadius="12dp"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="10dp"
+            app:cardCornerRadius="8dp"
             app:cardElevation="0dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
@@ -71,7 +79,7 @@
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:includeFontPadding="false"
-                android:textColor="#999999"
+                android:textColor="#CCCCCC"
                 android:textSize="11sp"
                 tools:text="Artist - Album" />
         </LinearLayout>
@@ -82,6 +90,7 @@
             android:layout_height="match_parent"
             android:gravity="center_vertical"
             android:orientation="horizontal"
+            android:layout_marginEnd="6dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent">
@@ -120,6 +129,18 @@
                 android:contentDescription="Next" />
 
         </LinearLayout>
+
+        <!-- 实时进度条 -->
+        <com.google.android.material.progressindicator.LinearProgressIndicator
+            android:id="@+id/mini_progress_bar"
+            android:layout_width="match_parent"
+            android:layout_height="3dp"
+            android:layout_marginHorizontal="12dp"
+            app:indicatorColor="@color/white"
+            app:trackColor="#33FFFFFF"
+            app:trackThickness="3dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            android:layout_marginBottom="1dp" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 </com.google.android.material.card.MaterialCardView>

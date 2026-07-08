@@ -37,14 +37,21 @@
     <string name="btn_download">Download Music</string>
     <string name="btn_two_way_sync">Two-way Sync</string>
     <string name="btn_sync_now">Sync Now</string>
+    <string name="btn_delete_cloud_songs">Delete Cloud Songs</string>
+    <string name="delete_cloud_title">Delete Cloud Songs</string>
+    <string name="delete_confirm">Delete</string>
+    <string name="cancel">Cancel</string>
+    <string name="no_cloud_songs">No cloud songs found</string>
 
     <!-- Sync Progress -->
     <string name="syncing_music">Syncing music...</string>
+    <string name="uploading">Uploading...</string>
     <string name="uploading_file">Uploading: %s</string>
     <string name="downloading_file">Downloading: %s</string>
     <string name="sync_progress">Progress: %1$d / %2$d</string>
     <string name="sync_complete">Sync Complete</string>
     <string name="sync_failed">Sync Failed: %s</string>
+    <string name="deleting_songs">Deleting songs...</string>
 
     <!-- Other -->
     <string name="local_library_title">Local Music Directory</string>

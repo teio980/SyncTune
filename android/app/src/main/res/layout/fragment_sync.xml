@@ -114,19 +114,46 @@
         </com.google.android.material.card.MaterialCardView>
 
         <!-- Sync Actions -->
+        <LinearLayout
+            android:id="@+id/layout_actions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:orientation="vertical"
+            app:layout_constraintTop_toBottomOf="@id/card_status">
+
+            <Button
+                android:id="@+id/btn_sync_now"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:backgroundTint="@color/purple_700"
+                android:text="@string/btn_sync_now"
+                app:cornerRadius="12dp" />
+
+            <Button
+                android:id="@+id/btn_upload_file"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="12dp"
+                android:text="@string/btn_upload"
+                android:textColor="@color/white"
+                app:cornerRadius="12dp"
+                app:strokeColor="@color/purple_700" />
+
+            <Button
+                android:id="@+id/btn_delete_cloud_songs"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="8dp"
+                android:text="@string/btn_delete_cloud_songs"
+                android:textColor="#F44336"
+                app:cornerRadius="12dp" />
+
+        </LinearLayout>
 
         <!-- Progress Card -->
-        <Button
-            android:id="@+id/btn_sync_now"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="24dp"
-            android:backgroundTint="@color/purple_700"
-            android:text="@string/btn_sync_now"
-            app:cornerRadius="12dp"
-            app:layout_constraintTop_toBottomOf="@id/card_status"
-            tools:layout_editor_absoluteX="24dp" />
-
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/card_progress"
             android:layout_width="match_parent"
@@ -135,7 +162,7 @@
             android:visibility="gone"
             app:cardBackgroundColor="#1E1E1E"
             app:cardCornerRadius="16dp"
-            app:layout_constraintTop_toBottomOf="@id/btn_sync_now">
+            app:layout_constraintTop_toBottomOf="@id/layout_actions">
 
             <LinearLayout
                 android:layout_width="match_parent"
