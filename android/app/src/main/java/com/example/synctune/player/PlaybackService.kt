@@ -5,9 +5,12 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -23,6 +26,7 @@ class PlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
     private var playbackCacheHelper: PlaybackCacheHelper? = null
+    private var exoPlayer: ExoPlayer? = null
 
     companion object {
         const val COMMAND_CYCLE_PLAYBACK_MODE = "COMMAND_CYCLE_PLAYBACK_MODE"
@@ -41,7 +45,19 @@ class PlaybackService : MediaSessionService() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        val player = PlayerManager.getPlayer(this)
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
+
+        val player = ExoPlayer.Builder(this)
+            .setAudioAttributes(audioAttributes, true)
+            .setHandleAudioBecomingNoisy(true)
+            .build()
+        player.repeatMode = Player.REPEAT_MODE_ALL
+        player.playWhenReady = true
+        exoPlayer = player
+        PlayerManager.setServicePlayer(player)
         
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -97,7 +113,7 @@ class PlaybackService : MediaSessionService() {
     private fun saveCurrentPosition() {
         try {
             playbackCacheHelper?.let { helper ->
-                val player = PlayerManager.getPlayer(this)
+                val player = exoPlayer ?: return
                 if (player.mediaItemCount > 0 && player.duration > 0) {
                     val item = player.currentMediaItem
                     if (item != null) {
@@ -235,7 +251,9 @@ class PlaybackService : MediaSessionService() {
             release()
             mediaSession = null
         }
-        PlayerManager.releasePlayer()
+        PlayerManager.clearServicePlayer()
+        exoPlayer?.release()
+        exoPlayer = null
         super.onDestroy()
     }
 }
