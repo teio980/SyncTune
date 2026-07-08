@@ -1,5 +1,6 @@
 package com.example.synctune.ui.nowplaying
 
+import android.content.ComponentName
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -24,13 +25,18 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import androidx.palette.graphics.Palette
 import com.example.synctune.R
 import com.example.synctune.library.SongDao
+import com.example.synctune.player.PlaybackService
 import com.example.synctune.player.PlayerManager
 import com.example.synctune.sync.SyncManager
 import com.example.synctune.sync.WebDAVHelper
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,12 +60,37 @@ class NowPlayingFragment : Fragment() {
     
     private lateinit var songDao: SongDao
     private lateinit var syncManager: SyncManager
+    private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var mediaController: MediaController? = null
+    private var observedPlayer: Player? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private val updateProgressAction = object : Runnable {
         override fun run() {
             updateProgress()
             handler.postDelayed(this, 1000)
+        }
+    }
+    private val playerListener = object : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            updateUI(mediaItem)
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            updatePlayPauseIcon(isPlaying)
+            if (isPlaying) {
+                handler.post(updateProgressAction)
+            } else {
+                handler.removeCallbacks(updateProgressAction)
+            }
+        }
+
+        override fun onRepeatModeChanged(repeatMode: Int) {
+            updateRepeatModeIcon(repeatMode)
+        }
+
+        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+            updateShuffleModeIcon(shuffleModeEnabled)
         }
     }
 
@@ -75,13 +106,50 @@ class NowPlayingFragment : Fragment() {
         initViews(view)
         setupPlayerListener()
         
-        val player = PlayerManager.getPlayer(requireContext())
-        updateUI(player.currentMediaItem)
-        updatePlayPauseIcon(player.isPlaying)
-        updateRepeatModeIcon(player.repeatMode)
-        updateShuffleModeIcon(player.shuffleModeEnabled)
+        activePlayer()?.let { player ->
+            updateUI(player.currentMediaItem)
+            updatePlayPauseIcon(player.isPlaying)
+            updateRepeatModeIcon(player.repeatMode)
+            updateShuffleModeIcon(player.shuffleModeEnabled)
+        }
         
         return view
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val sessionToken = SessionToken(requireContext(), ComponentName(requireContext(), PlaybackService::class.java))
+        controllerFuture = MediaController.Builder(requireContext(), sessionToken).buildAsync()
+        controllerFuture?.addListener({
+            try {
+                mediaController = controllerFuture?.get()
+                setupPlayerListener()
+                mediaController?.let { player ->
+                    updateUI(player.currentMediaItem)
+                    updatePlayPauseIcon(player.isPlaying)
+                    updateRepeatModeIcon(player.repeatMode)
+                    updateShuffleModeIcon(player.shuffleModeEnabled)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }, MoreExecutors.directExecutor())
+    }
+
+    override fun onStop() {
+        super.onStop()
+        observedPlayer?.removeListener(playerListener)
+        observedPlayer = null
+        controllerFuture?.let { MediaController.releaseFuture(it) }
+        controllerFuture = null
+        mediaController = null
+        handler.removeCallbacks(updateProgressAction)
+    }
+
+    override fun onDestroyView() {
+        observedPlayer?.removeListener(playerListener)
+        observedPlayer = null
+        super.onDestroyView()
     }
 
     private fun initViews(view: View) {
@@ -106,29 +174,29 @@ class NowPlayingFragment : Fragment() {
 
         btnPlayPause?.setOnClickListener {
             it.startAnimation(btnClickAnim)
-            val player = PlayerManager.getPlayer(requireContext())
+            val player = activePlayer() ?: return@setOnClickListener
             if (player.isPlaying) player.pause() else player.play()
         }
 
         view.findViewById<ImageButton>(R.id.btn_next).setOnClickListener {
             it.startAnimation(btnClickAnim)
-            PlayerManager.getPlayer(requireContext()).seekToNext()
+            activePlayer()?.seekToNext()
         }
 
         view.findViewById<ImageButton>(R.id.btn_prev).setOnClickListener {
             it.startAnimation(btnClickAnim)
-            PlayerManager.getPlayer(requireContext()).seekToPrevious()
+            activePlayer()?.seekToPrevious()
         }
 
         btnShuffle?.setOnClickListener {
             it.startAnimation(btnClickAnim)
-            val player = PlayerManager.getPlayer(requireContext())
+            val player = activePlayer() ?: return@setOnClickListener
             player.shuffleModeEnabled = !player.shuffleModeEnabled
         }
 
         btnRepeat?.setOnClickListener {
             it.startAnimation(btnClickAnim)
-            val player = PlayerManager.getPlayer(requireContext())
+            val player = activePlayer() ?: return@setOnClickListener
             player.repeatMode = when (player.repeatMode) {
                 Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
                 Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
@@ -144,7 +212,7 @@ class NowPlayingFragment : Fragment() {
         seekBar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
-                    PlayerManager.getPlayer(requireContext()).seekTo(progress.toLong())
+                    activePlayer()?.seekTo(progress.toLong())
                 }
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -153,7 +221,7 @@ class NowPlayingFragment : Fragment() {
     }
 
     private fun toggleFavourite() {
-        val player = PlayerManager.getPlayer(requireContext())
+        val player = activePlayer() ?: return
         val currentMediaItem = player.currentMediaItem ?: return
         val hash = currentMediaItem.mediaId
 
@@ -195,29 +263,10 @@ class NowPlayingFragment : Fragment() {
     }
 
     private fun setupPlayerListener() {
-        val player = PlayerManager.getPlayer(requireContext())
-        player.addListener(object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                updateUI(mediaItem)
-            }
-
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                updatePlayPauseIcon(isPlaying)
-                if (isPlaying) {
-                    handler.post(updateProgressAction)
-                } else {
-                    handler.removeCallbacks(updateProgressAction)
-                }
-            }
-
-            override fun onRepeatModeChanged(repeatMode: Int) {
-                updateRepeatModeIcon(repeatMode)
-            }
-
-            override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
-                updateShuffleModeIcon(shuffleModeEnabled)
-            }
-        })
+        val player = activePlayer() ?: return
+        observedPlayer?.removeListener(playerListener)
+        observedPlayer = player
+        player.addListener(playerListener)
     }
 
     private fun updateUI(mediaItem: MediaItem?) {
@@ -346,7 +395,7 @@ class NowPlayingFragment : Fragment() {
     private fun updateProgress() {
         if (!isAdded) return
         
-        val player = PlayerManager.getPlayer(requireContext())
+        val player = activePlayer() ?: return
         if (player.duration > 0) {
             seekBar?.max = player.duration.toInt()
             seekBar?.progress = player.currentPosition.toInt()
@@ -364,7 +413,7 @@ class NowPlayingFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        if (PlayerManager.getPlayer(requireContext()).isPlaying) {
+        if (activePlayer()?.isPlaying == true) {
             handler.post(updateProgressAction)
         }
     }
@@ -372,5 +421,9 @@ class NowPlayingFragment : Fragment() {
     override fun onPause() {
         super.onPause()
         handler.removeCallbacks(updateProgressAction)
+    }
+
+    private fun activePlayer(): Player? {
+        return mediaController ?: PlayerManager.getPlayer()
     }
 }

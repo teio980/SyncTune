@@ -1,6 +1,7 @@
 package com.example.synctune.ui.library
 
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -23,16 +24,22 @@ import androidx.appcompat.widget.PopupMenu
 import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import androidx.recyclerview.widget.*
 import com.example.synctune.R
 import com.example.synctune.library.*
+import com.example.synctune.player.PlaybackService
 import com.example.synctune.player.PlayerManager
 import com.example.synctune.sync.*
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.textfield.*
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.*
 
 class LibraryFragment : Fragment() {
@@ -45,6 +52,14 @@ class LibraryFragment : Fragment() {
     private var searchQuery = ""
     private var scanProgressBar: LinearProgressIndicator? = null
     private var songToEdit: Song? = null
+    private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var mediaController: MediaController? = null
+    private var observedPlayer: Player? = null
+    private val playerListener = object : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            syncCurrentPlayingPath()
+        }
+    }
 
     private val syncReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -92,15 +107,38 @@ class LibraryFragment : Fragment() {
         } else {
             requireContext().registerReceiver(syncReceiver, filter)
         }
+
+        val sessionToken = SessionToken(requireContext(), ComponentName(requireContext(), PlaybackService::class.java))
+        controllerFuture = MediaController.Builder(requireContext(), sessionToken).buildAsync()
+        controllerFuture?.addListener({
+            try {
+                mediaController = controllerFuture?.get()
+                setupPlayerListener()
+                syncCurrentPlayingPath()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }, MoreExecutors.directExecutor())
     }
 
     override fun onStop() {
         super.onStop()
+        observedPlayer?.removeListener(playerListener)
+        observedPlayer = null
+        controllerFuture?.let { MediaController.releaseFuture(it) }
+        controllerFuture = null
+        mediaController = null
         requireContext().unregisterReceiver(syncReceiver)
+    }
+
+    override fun onDestroyView() {
+        observedPlayer?.removeListener(playerListener)
+        observedPlayer = null
+        super.onDestroyView()
     }
     
     private fun syncCurrentPlayingPath() {
-        val player = PlayerManager.getPlayer(requireContext())
+        val player = activePlayer() ?: return
         val currentUri = player.currentMediaItem?.localConfiguration?.uri?.toString()
         songAdapter.setPlayingSongPath(currentUri)
     }
@@ -357,11 +395,14 @@ class LibraryFragment : Fragment() {
     }
 
     private fun setupPlayerListener() {
-        PlayerManager.getPlayer(requireContext()).addListener(object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
-                syncCurrentPlayingPath()
-            }
-        })
+        val player = activePlayer() ?: return
+        observedPlayer?.removeListener(playerListener)
+        observedPlayer = player
+        player.addListener(playerListener)
+    }
+
+    private fun activePlayer(): Player? {
+        return mediaController ?: PlayerManager.getController() ?: PlayerManager.getPlayer()
     }
 
     private var lastSwipedPosition: Int = -1
@@ -379,7 +420,7 @@ class LibraryFragment : Fragment() {
                 
                 if (swipeThresholdExecuted) {
                     val song = songAdapter.getSongs()[position]
-                    PlayerManager.playNext(requireContext(), song)
+                    PlayerManager.playNext(song)
                     Toast.makeText(requireContext(), "Added to Play Next: ${song.title}", Toast.LENGTH_SHORT).show()
                     
                     lastSwipedPosition = -1

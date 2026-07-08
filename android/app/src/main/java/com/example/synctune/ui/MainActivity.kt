@@ -67,6 +67,8 @@ class MainActivity : AppCompatActivity() {
     private var miniBackgroundGradient: View? = null
     
     private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var observedPlayer: Player? = null
+    private var shouldRestorePlayback = false
     private lateinit var songDao: SongDao
 
     private val handler = Handler(Looper.getMainLooper())
@@ -74,6 +76,31 @@ class MainActivity : AppCompatActivity() {
         override fun run() {
             updateMiniProgress()
             handler.postDelayed(this, 1000)
+        }
+    }
+    private val miniPlayerListener = object : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            runOnUiThread { updateMiniPlayerUI(mediaItem) }
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            runOnUiThread {
+                updatePlayPauseIcon(isPlaying)
+                if (isPlaying) {
+                    handler.removeCallbacks(updateProgressAction)
+                    handler.post(updateProgressAction)
+                } else {
+                    handler.removeCallbacks(updateProgressAction)
+                }
+            }
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            runOnUiThread { updateMiniPlayerVisibility() }
+        }
+
+        override fun onEvents(player: Player, events: Player.Events) {
+            runOnUiThread { updateMiniPlayerVisibility() }
         }
     }
 
@@ -101,19 +128,17 @@ class MainActivity : AppCompatActivity() {
         // Must create notification channels before starting foreground service.
         createNotificationChannels()
 
-        val player = PlayerManager.getPlayer(this)
         // Start service early so the MediaSession is registered with the system.
         // This is required for earphone media buttons to be routed to SyncTune.
         // PlaybackService calls startForeground() immediately with an idle notification
         // to satisfy Android 12+ foreground service requirements.
-        startForegroundService(Intent(this, PlaybackService::class.java))
-        setupPlayerListener(player)
+        ContextCompat.startForegroundService(this, Intent(this, PlaybackService::class.java))
 
         if (savedInstanceState == null) {
             loadFragment(LibraryFragment(), false)
             triggerAutoSync()
             checkIntentForNavigation(intent)
-            restorePlaybackIfNeeded()
+            shouldRestorePlayback = true
         }
 
         requestNotificationPermission()
@@ -187,13 +212,20 @@ class MainActivity : AppCompatActivity() {
         controllerFuture?.addListener({
             try {
                 val controller = controllerFuture?.get()
-                controller?.let { setupPlayerListener(it) }
+                controller?.let {
+                    PlayerManager.setController(it)
+                    setupPlayerListener(it)
+                    if (shouldRestorePlayback) {
+                        restorePlaybackIfNeeded()
+                        shouldRestorePlayback = false
+                    }
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }, MoreExecutors.directExecutor())
         
-        if (PlayerManager.getPlayer(this).isPlaying) {
+        if (activePlayer()?.isPlaying == true) {
             handler.post(updateProgressAction)
         }
     }
@@ -203,6 +235,9 @@ class MainActivity : AppCompatActivity() {
         controllerFuture?.let {
             MediaController.releaseFuture(it)
         }
+        observedPlayer?.removeListener(miniPlayerListener)
+        observedPlayer = null
+        PlayerManager.setController(null)
         handler.removeCallbacks(updateProgressAction)
     }
 
@@ -261,7 +296,6 @@ class MainActivity : AppCompatActivity() {
             val song = songDao.getSongByHash(cache.songHash) ?: return
 
             PlayerManager.restoreFromCache(
-                this,
                 song,
                 cache.position,
                 cache.repeatMode,
@@ -291,18 +325,18 @@ class MainActivity : AppCompatActivity() {
 
         miniBtnPlayPause?.setOnClickListener {
             it.startAnimation(btnClickAnim)
-            val player = PlayerManager.getPlayer(this)
+            val player = activePlayer() ?: return@setOnClickListener
             if (player.isPlaying) player.pause() else player.play()
         }
 
         miniBtnNext?.setOnClickListener {
             it.startAnimation(btnClickAnim)
-            PlayerManager.getPlayer(this).seekToNext()
+            activePlayer()?.seekToNext()
         }
 
         miniBtnPrev?.setOnClickListener {
             it.startAnimation(btnClickAnim)
-            PlayerManager.getPlayer(this).seekToPrevious()
+            activePlayer()?.seekToPrevious()
         }
 
         supportFragmentManager.addOnBackStackChangedListener {
@@ -311,31 +345,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupPlayerListener(player: Player) {
-        player.addListener(object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                runOnUiThread { updateMiniPlayerUI(mediaItem) }
-            }
-
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                runOnUiThread { 
-                    updatePlayPauseIcon(isPlaying)
-                    if (isPlaying) {
-                        handler.removeCallbacks(updateProgressAction)
-                        handler.post(updateProgressAction)
-                    } else {
-                        handler.removeCallbacks(updateProgressAction)
-                    }
-                }
-            }
-
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                runOnUiThread { updateMiniPlayerVisibility() }
-            }
-
-            override fun onEvents(player: Player, events: Player.Events) {
-                runOnUiThread { updateMiniPlayerVisibility() }
-            }
-        })
+        observedPlayer?.removeListener(miniPlayerListener)
+        observedPlayer = player
+        player.addListener(miniPlayerListener)
         
         runOnUiThread {
             updateMiniPlayerUI(player.currentMediaItem)
@@ -346,8 +358,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateMiniPlayerVisibility() {
-        val player = PlayerManager.getPlayer(this)
         val currentFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
+        val player = activePlayer()
+        if (player == null) {
+            miniPlayerCard?.visibility = View.GONE
+            navView.visibility = if (currentFragment !is NowPlayingFragment) View.VISIBLE else View.GONE
+            return
+        }
         
         val hasMedia = player.mediaItemCount > 0
         val isNotIdle = player.playbackState != Player.STATE_IDLE
@@ -409,11 +426,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateMiniProgress() {
-        val player = PlayerManager.getPlayer(this)
+        val player = activePlayer() ?: return
         if (player.duration > 0) {
             miniProgressBar?.max = player.duration.toInt()
             miniProgressBar?.progress = player.currentPosition.toInt()
         }
+    }
+
+    private fun activePlayer(): Player? {
+        return PlayerManager.getController() ?: PlayerManager.getPlayer()
     }
 
     private fun isColorDark(color: Int): Boolean {
@@ -464,6 +485,8 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacks(updateProgressAction)
+        observedPlayer?.removeListener(miniPlayerListener)
+        observedPlayer = null
         // Player 生命周期由 PlaybackService 管理
         // 不在 Activity.onDestroy() 中释放，保证播放器在后台划掉时仍能继续播放
     }
