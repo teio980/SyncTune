@@ -388,7 +388,7 @@ class LibraryFragment : Fragment() {
             val index = sorted.indexOfFirst { it.fileHash == clickedSong.fileHash }
             if (index >= 0) {
                 withContext(Dispatchers.Main) {
-                    PlayerManager.play(requireContext(), sorted, index)
+                    PlayerManager.play(sorted, index)
                 }
             }
         }

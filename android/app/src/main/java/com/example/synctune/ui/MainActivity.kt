@@ -37,7 +37,7 @@ import androidx.media3.session.SessionToken
 import androidx.palette.graphics.Palette
 import androidx.work.*
 import com.example.synctune.R
-import com.example.synctune.library.PlaybackCache
+import com.example.synctune.library.PlaybackCacheHelper
 import com.example.synctune.library.SongDao
 import com.example.synctune.player.PlaybackService
 import com.example.synctune.player.PlayerManager
@@ -286,7 +286,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun restorePlaybackIfNeeded() {
         try {
-            val cache = PlaybackCache.get(this) ?: return
+            val cache = PlaybackCacheHelper(this).getCache() ?: return
             val song = songDao.getSongByHash(cache.songHash) ?: return
 
             PlayerManager.restoreFromCache(
