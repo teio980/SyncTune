@@ -1,10 +1,8 @@
 package com.example.synctune.player
 
-import android.app.Notification
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Bundle
-import androidx.core.app.NotificationCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -30,7 +28,6 @@ class PlaybackService : MediaSessionService() {
 
     companion object {
         const val COMMAND_CYCLE_PLAYBACK_MODE = "COMMAND_CYCLE_PLAYBACK_MODE"
-        private const val NOTIFICATION_ID = 1
 
         fun shouldStop(player: Player?): Boolean {
             return player == null || player.mediaItemCount == 0
@@ -73,11 +70,6 @@ class PlaybackService : MediaSessionService() {
             .setSessionActivity(pendingIntent)
             .setCallback(CustomMediaSessionCallback())
             .build()
-
-        // Android 12+ requires foreground service notification within seconds.
-        // Start foreground immediately with idle notification, even if no media is loaded.
-        // Media3 will replace this with a proper playback notification once playing.
-        startForeground(NOTIFICATION_ID, buildIdleNotification())
 
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -132,23 +124,6 @@ class PlaybackService : MediaSessionService() {
         } catch (e: Throwable) {
             e.printStackTrace()
         }
-    }
-
-    private fun buildIdleNotification(): Notification {
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        return NotificationCompat.Builder(this, "default_notification_channel")
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText("准备就绪")
-            .setContentIntent(pendingIntent)
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setOngoing(true)
-            .build()
     }
 
     @UnstableApi

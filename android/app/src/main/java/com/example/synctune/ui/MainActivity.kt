@@ -128,12 +128,6 @@ class MainActivity : AppCompatActivity() {
         // Must create notification channels before starting foreground service.
         createNotificationChannels()
 
-        // Start service early so the MediaSession is registered with the system.
-        // This is required for earphone media buttons to be routed to SyncTune.
-        // PlaybackService calls startForeground() immediately with an idle notification
-        // to satisfy Android 12+ foreground service requirements.
-        ContextCompat.startForegroundService(this, Intent(this, PlaybackService::class.java))
-
         if (savedInstanceState == null) {
             loadFragment(LibraryFragment(), false)
             triggerAutoSync()
