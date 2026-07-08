@@ -1,15 +1,12 @@
 package com.example.synctune.player
 
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
-import androidx.core.content.ContextCompat
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
 import com.example.synctune.library.PlaybackCache
 import com.example.synctune.library.Song
 import java.io.File
@@ -18,34 +15,31 @@ object PlayerManager {
 
     private var exoPlayer: ExoPlayer? = null
     private var currentPlaylistPaths: List<String>? = null
+    private var mediaController: MediaController? = null
 
-fun getPlayer(context: Context): ExoPlayer {
-        if (exoPlayer == null) {
-            val audioAttributes = AudioAttributes.Builder()
-                .setUsage(C.USAGE_MEDIA)
-                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                .build()
-
-            exoPlayer = ExoPlayer.Builder(context.applicationContext)
-                .setAudioAttributes(audioAttributes, true)
-                .setHandleAudioBecomingNoisy(true)
-                .build()
-            
-            exoPlayer!!.repeatMode = Player.REPEAT_MODE_ALL
-            exoPlayer!!.playWhenReady = true
-        }
-        
-        return exoPlayer!!
+    fun setServicePlayer(player: ExoPlayer) {
+        exoPlayer = player
     }
 
-    private fun ensureServiceStarted(context: Context) {
-        val intent = Intent(context.applicationContext, PlaybackService::class.java)
-        ContextCompat.startForegroundService(context, intent)
+    fun clearServicePlayer() {
+        exoPlayer = null
+        currentPlaylistPaths = null
+    }
+
+    fun getPlayer(): ExoPlayer? {
+        return exoPlayer
+    }
+
+    fun setController(controller: MediaController?) {
+        mediaController = controller
+    }
+
+    fun getController(): MediaController? {
+        return mediaController
     }
 
     fun play(context: Context, songs: List<Song>, startIndex: Int) {
-        val player = getPlayer(context)
-        ensureServiceStarted(context)
+        val player = mediaController ?: exoPlayer ?: return
         
         val newPaths = songs.map { it.filePath }
         val currentSong = if (startIndex < songs.size) songs[startIndex] else null
@@ -85,9 +79,8 @@ fun getPlayer(context: Context): ExoPlayer {
     /**
      * 将歌曲添加到"下一首播放"
      */
-    fun playNext(context: Context, song: Song) {
-        val player = getPlayer(context)
-        ensureServiceStarted(context)
+    fun playNext(song: Song) {
+        val player = mediaController ?: exoPlayer ?: return
 
         val mediaItem = createMediaItem(song)
 
@@ -126,11 +119,11 @@ fun getPlayer(context: Context): ExoPlayer {
         }
     }
 
-    private fun createMediaItems(songs: List<Song>): List<MediaItem> {
+    internal fun createMediaItems(songs: List<Song>): List<MediaItem> {
         return songs.map { createMediaItem(it) }
     }
 
-    private fun createMediaItem(song: Song): MediaItem {
+    internal fun createMediaItem(song: Song): MediaItem {
         val metadata = MediaMetadata.Builder()
             .setTitle(song.title)
             .setArtist(song.artist)
@@ -148,14 +141,8 @@ fun getPlayer(context: Context): ExoPlayer {
             .build()
     }
 
-    fun releasePlayer() {
-        exoPlayer?.release()
-        exoPlayer = null
-        currentPlaylistPaths = null
-    }
-
-    fun restoreFromCache(context: Context, song: Song, position: Long, repeatMode: Int, shuffleMode: Boolean) {
-        val player = getPlayer(context)
+    fun restoreFromCache(song: Song, position: Long, repeatMode: Int, shuffleMode: Boolean) {
+        val player = mediaController ?: exoPlayer ?: return
         currentPlaylistPaths = listOf(song.filePath)
         val mediaItem = createMediaItem(song)
         player.setMediaItem(mediaItem)
