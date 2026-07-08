@@ -27,6 +27,10 @@ class PlaybackService : MediaSessionService() {
     companion object {
         const val COMMAND_CYCLE_PLAYBACK_MODE = "COMMAND_CYCLE_PLAYBACK_MODE"
         private const val NOTIFICATION_ID = 1
+
+        fun shouldStop(player: Player?): Boolean {
+            return player == null || player.mediaItemCount == 0
+        }
     }
 
     @UnstableApi
@@ -166,8 +170,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        val player = mediaSession?.player
-        if (player == null || !player.playWhenReady || player.playbackState == Player.STATE_IDLE) {
+        if (shouldStop(mediaSession?.player)) {
             stopSelf()
         }
     }
