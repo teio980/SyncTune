@@ -1,14 +1,17 @@
 package com.example.synctune.player
 
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.session.MediaController
+import androidx.media3.common.Player
 import com.example.synctune.library.Song
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
+import org.junit.runner.RunWith
 import org.mockito.Mockito.mock
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class PlayerManagerTest {
     @Test
     fun createMediaItem_setsIdentityAndFileUri() {
@@ -60,7 +63,7 @@ class PlayerManagerTest {
 
     @Test
     fun controllerHolder_returnsLastController() {
-        val controller = mock(MediaController::class.java)
+        val controller = mock(Player::class.java)
 
         PlayerManager.setController(controller)
 
@@ -69,7 +72,7 @@ class PlayerManagerTest {
 
     @Test
     fun controllerHolder_canBeCleared() {
-        PlayerManager.setController(mock(MediaController::class.java))
+        PlayerManager.setController(mock(Player::class.java))
 
         PlayerManager.setController(null)
 

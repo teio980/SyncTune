@@ -6,7 +6,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.session.MediaController
 import com.example.synctune.library.PlaybackCache
 import com.example.synctune.library.Song
 import java.io.File
@@ -15,7 +14,7 @@ object PlayerManager {
 
     private var exoPlayer: ExoPlayer? = null
     private var currentPlaylistPaths: List<String>? = null
-    private var mediaController: MediaController? = null
+    private var mediaController: Player? = null
 
     fun setServicePlayer(player: ExoPlayer) {
         exoPlayer = player
@@ -30,11 +29,11 @@ object PlayerManager {
         return exoPlayer
     }
 
-    fun setController(controller: MediaController?) {
+    fun setController(controller: Player?) {
         mediaController = controller
     }
 
-    fun getController(): MediaController? {
+    fun getController(): Player? {
         return mediaController
     }
 
