@@ -28,6 +28,9 @@ local.properties
 .cxx/
 .externalNativeBuild/
 
+# --- Agent workspace ---
+.omo/
+
 # --- Misc ---
 *.log
 /captures/
