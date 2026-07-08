@@ -1,18 +1,42 @@
 package com.example.synctune.player
 
+import android.content.Context
+import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.common.Player
 import com.example.synctune.library.Song
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.ArgumentCaptor
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.verify
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class PlayerManagerTest {
+    private lateinit var context: Context
+
+    @Before
+    fun setUp() {
+        context = RuntimeEnvironment.getApplication()
+        legacyPlaybackCachePrefs().edit().clear().commit()
+        PlayerManager.setController(null)
+        PlayerManager.clearServicePlayer()
+    }
+
+    @After
+    fun tearDown() {
+        legacyPlaybackCachePrefs().edit().clear().commit()
+        PlayerManager.setController(null)
+        PlayerManager.clearServicePlayer()
+    }
+
     @Test
     fun createMediaItem_setsIdentityAndFileUri() {
         val song = song(
@@ -95,6 +119,50 @@ class PlayerManagerTest {
         assertEquals(player, PlayerManager.getPlayer())
         PlayerManager.clearServicePlayer()
     }
+
+    @Test
+    fun play_doesNotWriteLegacySharedPreferencesCache_whenStartingSong() {
+        val controller = mock(Player::class.java)
+        val songs = listOf(song(filePath = "/music/cached.mp3", fileHash = "cached-hash"))
+        PlayerManager.setController(controller)
+
+        PlayerManager.play(songs, 0)
+
+        assertNull(legacyPlaybackCachePrefs().getString("song_hash", null))
+    }
+
+    @Test
+    fun restoreFromCache_preparesSingleItemAndRestoresPlaybackModeWithoutAutoplay() {
+        val controller = mock(Player::class.java)
+        val song = song(
+            title = "Cached Song",
+            artist = "Cached Artist",
+            album = "Cached Album",
+            filePath = "/music/cached.mp3",
+            fileHash = "cached-hash",
+        )
+
+        PlayerManager.setController(controller)
+
+        PlayerManager.restoreFromCache(
+            song = song,
+            position = 42_000L,
+            repeatMode = Player.REPEAT_MODE_ONE,
+            shuffleMode = true,
+        )
+
+        val itemCaptor = ArgumentCaptor.forClass(MediaItem::class.java)
+        verify(controller).setMediaItem(itemCaptor.capture())
+        assertEquals("cached-hash", itemCaptor.value.mediaId)
+        verify(controller).seekTo(42_000L)
+        verify(controller).setRepeatMode(Player.REPEAT_MODE_ONE)
+        verify(controller).setShuffleModeEnabled(true)
+        verify(controller).prepare()
+        verify(controller).setPlayWhenReady(false)
+    }
+
+    private fun legacyPlaybackCachePrefs() =
+        context.getSharedPreferences("playback_cache", Context.MODE_PRIVATE)
 
     private fun song(
         title: String = "Title",

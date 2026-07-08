@@ -1,12 +1,10 @@
 package com.example.synctune.player
 
-import android.content.Context
 import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import com.example.synctune.library.PlaybackCache
 import com.example.synctune.library.Song
 import java.io.File
 
@@ -37,11 +35,10 @@ object PlayerManager {
         return mediaController
     }
 
-    fun play(context: Context, songs: List<Song>, startIndex: Int) {
+    fun play(songs: List<Song>, startIndex: Int) {
         val player = mediaController ?: exoPlayer ?: return
         
         val newPaths = songs.map { it.filePath }
-        val currentSong = if (startIndex < songs.size) songs[startIndex] else null
 
         if (currentPlaylistPaths != null && currentPlaylistPaths == newPaths) {
             val isShuffle = player.shuffleModeEnabled
@@ -56,21 +53,6 @@ object PlayerManager {
             player.setMediaItems(mediaItems, startIndex, 0L)
             player.prepare()
             player.play()
-            
-            currentSong?.let { song ->
-                try {
-                    PlaybackCache.save(
-                        context,
-                        song.fileHash,
-                        song.filePath,
-                        0L,
-                        player.repeatMode,
-                        player.shuffleModeEnabled
-                    )
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
         }
         player.playWhenReady = true
     }
