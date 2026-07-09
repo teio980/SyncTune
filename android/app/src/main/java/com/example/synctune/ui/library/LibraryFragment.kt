@@ -17,6 +17,7 @@ import android.os.Vibrator
 import android.text.*
 import android.view.*
 import android.widget.*
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -92,6 +93,7 @@ class LibraryFragment : Fragment() {
         })
         v.findViewById<MaterialCardView>(R.id.card_scan).setOnClickListener { scan() }
         setupSearch(v); refresh()
+        registerSearchBackHandler(v)
         
         setupPlayerListener()
         syncCurrentPlayingPath()
@@ -154,7 +156,7 @@ class LibraryFragment : Fragment() {
 
     private fun setupSearch(v: View) {
         val til = v.findViewById<TextInputLayout>(R.id.til_search); val et = v.findViewById<TextInputEditText>(R.id.et_search)
-        v.findViewById<View>(R.id.btn_search).setOnClickListener { if (til.visibility == View.GONE) { til.visibility = View.VISIBLE; et.requestFocus() } else { til.visibility = View.GONE; et.text?.clear(); searchQuery = ""; refresh() } }
+        v.findViewById<View>(R.id.btn_search).setOnClickListener { if (til.visibility == View.GONE) { til.visibility = View.VISIBLE; et.requestFocus() } else { closeSearch(v) } }
         et.addTextChangedListener(object : TextWatcher {
             override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) { searchQuery = s?.toString() ?: ""; refresh() }
             override fun beforeTextChanged(p0: CharSequence?, p1: Int, p2: Int, p3: Int) {}; override fun afterTextChanged(p0: Editable?) {}
@@ -163,6 +165,26 @@ class LibraryFragment : Fragment() {
         v.findViewById<View>(R.id.btn_cancel_selection).setOnClickListener { songAdapter.setSelectionMode(false) }
         v.findViewById<View>(R.id.btn_delete_selected).setOnClickListener { val s = songAdapter.getSelectedSongs(); if (s.isNotEmpty()) deleteSongs(s) }
         v.findViewById<View>(R.id.btn_edit_selected).setOnClickListener { val s = songAdapter.getSelectedSongs(); if (s.size == 1) startCoverEdit(s[0]) }
+    }
+
+    private fun registerSearchBackHandler(v: View) {
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (v.findViewById<TextInputLayout>(R.id.til_search).visibility == View.VISIBLE) {
+                    closeSearch(v)
+                } else {
+                    isEnabled = false
+                    requireActivity().onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+    }
+
+    private fun closeSearch(v: View) {
+        v.findViewById<TextInputLayout>(R.id.til_search).visibility = View.GONE
+        v.findViewById<TextInputEditText>(R.id.et_search).text?.clear()
+        searchQuery = ""
+        refresh()
     }
 
     private fun showSongOptions(s: Song) { val opts = arrayOf("Edit Cover", "Delete"); AlertDialog.Builder(requireContext()).setTitle(s.title).setItems(opts) { _, w -> if (w == 0) startCoverEdit(s) else deleteSongs(listOf(s)) }.show() }
