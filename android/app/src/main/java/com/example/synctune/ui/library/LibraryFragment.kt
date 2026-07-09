@@ -56,6 +56,7 @@ class LibraryFragment : Fragment() {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var mediaController: MediaController? = null
     private var observedPlayer: Player? = null
+    private var menuBarsAutoHideController: LibraryMenuBarsAutoHideController? = null
     private val playerListener = object : Player.Listener {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             syncCurrentPlayingPath()
@@ -94,6 +95,11 @@ class LibraryFragment : Fragment() {
         v.findViewById<MaterialCardView>(R.id.card_scan).setOnClickListener { scan() }
         setupSearch(v); refresh()
         registerSearchBackHandler(v)
+        menuBarsAutoHideController = LibraryMenuBarsAutoHideController(
+            v,
+            requireActivity().findViewById(R.id.bottom_navigation),
+            requireActivity().findViewById(R.id.mini_player_card),
+        ).also { it.attach() }
         
         setupPlayerListener()
         syncCurrentPlayingPath()
@@ -134,6 +140,8 @@ class LibraryFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        menuBarsAutoHideController?.detach()
+        menuBarsAutoHideController = null
         observedPlayer?.removeListener(playerListener)
         observedPlayer = null
         super.onDestroyView()
