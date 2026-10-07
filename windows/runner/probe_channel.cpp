@@ -16,6 +16,9 @@
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Storage.AccessCache.h>
 #include <winrt/Windows.Storage.Pickers.h>
+#include <winrt/Windows.Web.Http.h>
+#include <winrt/Windows.Web.Http.Headers.h>
+#include <winrt/Windows.Web.Http.Filters.h>
 
 #include <memory>
 #include <string>
@@ -33,6 +36,9 @@
 #include <iomanip>
 #include <cctype>
 #include <stdexcept>
+#include <utility>
+#include <chrono>
+#include <functional>
 
 namespace {
 
@@ -53,6 +59,32 @@ using winrt::Windows::Storage::StorageItemTypes;
 using winrt::Windows::Storage::FileAccessMode;
 using winrt::Windows::Storage::Streams::DataReader;
 using winrt::Windows::Storage::Streams::DataWriter;
+using winrt::Windows::Storage::Streams::InputStreamOptions;
+using winrt::Windows::Web::Http::HttpClient;
+using winrt::Windows::Web::Http::HttpCompletionOption;
+using winrt::Windows::Web::Http::HttpMethod;
+using winrt::Windows::Web::Http::HttpRequestMessage;
+using winrt::Windows::Web::Http::HttpResponseMessage;
+using winrt::Windows::Web::Http::HttpStreamContent;
+using winrt::Windows::Web::Http::Filters::HttpBaseProtocolFilter;
+
+// These argument helpers are defined with the other broker utilities below.
+// The WebDAV transport is declared earlier because it owns the async HTTP
+// session types and must be available to the method-channel dispatcher.
+std::string ArgumentString(const flutter::EncodableValue* arguments,
+                           const char* key);
+const EncodableMap* ArgumentMap(const flutter::EncodableValue* arguments,
+                                const char* key);
+int64_t ArgumentInt64(const flutter::EncodableValue* arguments,
+                      const char* key, int64_t fallback = -1);
+bool ArgumentBool(const flutter::EncodableValue* arguments, const char* key,
+                  bool fallback);
+
+winrt::Windows::Foundation::IAsyncOperation<StorageFolder>
+AuthorizedFolderAsync(const winrt::hstring& token,
+                      const winrt::hstring& generation);
+winrt::Windows::Foundation::IAsyncOperation<StorageFile>
+StageFileAsync(const StorageFolder& root, const std::string& key);
 
 constexpr auto kTokenFileName = L"synctune_probe_folder_token.txt";
 constexpr auto kActiveRootFileName = L"synctune_active_root.txt";
@@ -155,6 +187,7 @@ EncodableValue ProcessInfo() {
        EncodableValue(static_cast<int64_t>(GetCurrentProcessId()))},
       {EncodableValue("appContainer"),
        EncodableValue(IsAppContainer() ? "true" : "false")},
+      {EncodableValue("platform"), EncodableValue("windows")},
       {EncodableValue("packageVersion"),
        EncodableValue(winrt::to_string(version_text))},
       {EncodableValue("packageFamily"),
@@ -163,6 +196,480 @@ EncodableValue ProcessInfo() {
 
 using MethodResult = flutter::MethodResult<EncodableValue>;
 using SharedResult = std::shared_ptr<MethodResult>;
+
+template <typename TOperation>
+winrt::fire_and_forget CancelAsyncAfter(
+    TOperation operation, std::shared_ptr<std::atomic_bool> completed,
+    std::shared_ptr<std::atomic_bool> timed_out,
+    int64_t timeout_ms = 15000) {
+  co_await winrt::resume_after(std::chrono::milliseconds(
+      std::max<int64_t>(1, timeout_ms)));
+  if (!completed->exchange(true, std::memory_order_acq_rel)) {
+    timed_out->store(true, std::memory_order_release);
+    try {
+      operation.Cancel();
+    } catch (const winrt::hresult_error&) {
+      // The Dart-side bounded wait still reports this probe as failed if the
+      // WinRT operation has already completed while cancellation raced it.
+    } catch (...) {
+      // A timeout must never turn into an uncaught native exception.
+    }
+  }
+}
+
+winrt::fire_and_forget HttpsProbeAsync(
+    SharedResult result, std::shared_ptr<std::atomic_bool> alive) {
+  try {
+    HttpClient client;
+    auto operation = client.GetAsync(
+        winrt::Windows::Foundation::Uri(L"https://example.com"),
+        HttpCompletionOption::ResponseHeadersRead);
+    auto completed = std::make_shared<std::atomic_bool>(false);
+    auto timed_out = std::make_shared<std::atomic_bool>(false);
+    CancelAsyncAfter(operation, completed, timed_out);
+    try {
+      const auto response = co_await operation;
+      completed->store(true, std::memory_order_release);
+      if (IsAlive(alive)) {
+        const auto status = static_cast<int32_t>(response.StatusCode());
+        result->Success(EncodableMap{
+            {EncodableValue("status"),
+             EncodableValue(status >= 200 && status < 300 ? "passed"
+                                                            : "failed")},
+            {EncodableValue("httpStatus"), EncodableValue(status)},
+            {EncodableValue("transport"), EncodableValue("winrt_http_client")},
+            {EncodableValue("timedOut"), EncodableValue(false)}});
+      }
+    } catch (const winrt::hresult_error& error) {
+      completed->store(true, std::memory_order_release);
+      if (IsAlive(alive)) {
+        result->Success(EncodableMap{
+            {EncodableValue("status"), EncodableValue("failed")},
+            {EncodableValue("transport"), EncodableValue("winrt_http_client")},
+            {EncodableValue("timedOut"),
+             EncodableValue(timed_out->load(std::memory_order_acquire))},
+            {EncodableValue("error"),
+             EncodableValue(winrt::to_string(error.message()))}});
+      }
+    } catch (const std::exception& error) {
+      completed->store(true, std::memory_order_release);
+      if (IsAlive(alive)) {
+        result->Success(EncodableMap{
+            {EncodableValue("status"), EncodableValue("failed")},
+            {EncodableValue("transport"), EncodableValue("winrt_http_client")},
+            {EncodableValue("timedOut"),
+             EncodableValue(timed_out->load(std::memory_order_acquire))},
+            {EncodableValue("error"), EncodableValue(error.what())}});
+      }
+    }
+  } catch (const winrt::hresult_error& error) {
+    if (IsAlive(alive)) {
+      result->Success(EncodableMap{
+          {EncodableValue("status"), EncodableValue("failed")},
+          {EncodableValue("transport"), EncodableValue("winrt_http_client")},
+          {EncodableValue("error"), EncodableValue(winrt::to_string(error.message()))}});
+    }
+  } catch (const std::exception& error) {
+    if (IsAlive(alive)) {
+      result->Success(EncodableMap{
+          {EncodableValue("status"), EncodableValue("failed")},
+          {EncodableValue("transport"), EncodableValue("winrt_http_client")},
+          {EncodableValue("error"), EncodableValue(error.what())}});
+    }
+  }
+}
+
+struct WebDavSession {
+  HttpClient client;
+  HttpResponseMessage response{nullptr};
+  winrt::Windows::Storage::Streams::IInputStream input{nullptr};
+  DataReader reader{nullptr};
+};
+
+std::mutex g_webdav_mutex;
+std::unordered_map<std::string, std::shared_ptr<WebDavSession>>
+    g_webdav_sessions;
+
+struct WebDavPendingOperation {
+  mutable std::mutex mutex;
+  bool cancelled = false;
+  std::function<void()> cancel;
+
+  bool IsCancelled() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return cancelled;
+  }
+
+  void SetCancel(std::function<void()> callback) {
+    bool invoke = false;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      if (cancelled) {
+        invoke = true;
+      } else {
+        cancel = std::move(callback);
+      }
+    }
+    if (invoke) callback();
+  }
+
+  void ClearCancel() {
+    std::lock_guard<std::mutex> lock(mutex);
+    cancel = nullptr;
+  }
+
+  void RequestCancel() {
+    std::function<void()> callback;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      cancelled = true;
+      callback = cancel;
+    }
+    if (callback) callback();
+  }
+};
+
+std::unordered_map<std::string, std::shared_ptr<WebDavPendingOperation>>
+    g_webdav_pending;
+
+void SetWebDavPending(
+    const std::string& id,
+    const std::shared_ptr<WebDavPendingOperation>& pending) {
+  std::lock_guard<std::mutex> lock(g_webdav_mutex);
+  g_webdav_pending[id] = pending;
+}
+
+void ClearWebDavPending(
+    const std::string& id,
+    const std::shared_ptr<WebDavPendingOperation>& pending) {
+  std::lock_guard<std::mutex> lock(g_webdav_mutex);
+  const auto found = g_webdav_pending.find(id);
+  if (found != g_webdav_pending.end() && found->second == pending) {
+    g_webdav_pending.erase(found);
+  }
+}
+
+const std::string* EncodableString(const EncodableValue& value) {
+  return std::get_if<std::string>(&value);
+}
+
+void AppendHttpHeaders(HttpRequestMessage& request, const EncodableMap* headers) {
+  if (headers == nullptr) return;
+  for (const auto& entry : *headers) {
+    const auto* name = EncodableString(entry.first);
+    const auto* value = EncodableString(entry.second);
+    if (name == nullptr || value == nullptr || name->empty()) continue;
+    const auto header_name = winrt::to_hstring(*name);
+    const auto header_value = winrt::to_hstring(*value);
+    if (request.Headers().TryAppendWithoutValidation(header_name, header_value)) {
+      continue;
+    }
+    if (request.Content() != nullptr &&
+        request.Content().Headers().TryAppendWithoutValidation(header_name,
+                                                               header_value)) {
+      continue;
+    }
+    throw std::runtime_error("unsupported WebDAV request header");
+  }
+}
+
+EncodableMap ResponseHeaders(const HttpResponseMessage& response) {
+  EncodableMap headers;
+  for (const auto& header : response.Headers()) {
+    headers.emplace(EncodableValue(winrt::to_string(header.Key())),
+                    EncodableValue(winrt::to_string(header.Value())));
+  }
+  if (response.Content() != nullptr) {
+    for (const auto& header : response.Content().Headers()) {
+      headers.emplace(EncodableValue(winrt::to_string(header.Key())),
+                      EncodableValue(winrt::to_string(header.Value())));
+    }
+  }
+  return headers;
+}
+
+winrt::fire_and_forget WebDavOpenAsync(
+    flutter::EncodableValue arguments, SharedResult result,
+    std::shared_ptr<std::atomic_bool> alive) {
+  std::string request_id;
+  std::shared_ptr<WebDavPendingOperation> pending;
+  try {
+    request_id = ArgumentString(&arguments, "id");
+    const auto url = ArgumentString(&arguments, "url");
+    const auto method = ArgumentString(&arguments, "method");
+    const auto body_path = ArgumentString(&arguments, "bodyPath");
+    const auto body_key = ArgumentString(&arguments, "bodyKey");
+    const auto body_token = ArgumentString(&arguments, "token");
+    const auto body_generation = ArgumentString(&arguments, "generation");
+    const auto follow_redirects = ArgumentBool(&arguments, "followRedirects", true);
+    const auto max_redirects = std::clamp<int64_t>(
+        ArgumentInt64(&arguments, "maxRedirects", 5), 0, 20);
+    const auto timeout_ms = std::clamp<int64_t>(
+        ArgumentInt64(&arguments, "timeoutMs", 60000), 1, 24 * 60 * 60 * 1000);
+    if (request_id.empty() || url.empty() || method.empty()) {
+      throw std::runtime_error("missing WebDAV request identity");
+    }
+    pending = std::make_shared<WebDavPendingOperation>();
+    SetWebDavPending(request_id, pending);
+    HttpBaseProtocolFilter filter;
+    // Redirects are handled here so Dio's maxRedirects bound is preserved;
+    // HttpBaseProtocolFilter itself only exposes an allow/deny switch.
+    filter.AllowAutoRedirect(false);
+    HttpClient client(filter);
+    auto current_uri = winrt::Windows::Foundation::Uri(winrt::to_hstring(url));
+    if (_wcsicmp(current_uri.SchemeName().c_str(), L"https") != 0) {
+      throw std::runtime_error("WebDAV transport requires HTTPS");
+    }
+    HttpResponseMessage response{nullptr};
+    int64_t redirects = 0;
+    while (true) {
+      HttpRequestMessage request(
+          HttpMethod(winrt::to_hstring(method)), current_uri);
+      if (!body_path.empty() || !body_key.empty()) {
+        StorageFile body_file{nullptr};
+        if (!body_key.empty()) {
+          if (body_token.empty() || body_generation.empty()) {
+            throw std::runtime_error("missing WebDAV root staging identity");
+          }
+          auto root = co_await AuthorizedFolderAsync(
+              winrt::to_hstring(body_token),
+              winrt::to_hstring(body_generation));
+          body_file = co_await StageFileAsync(root, body_key);
+        } else {
+          body_file = co_await StorageFile::GetFileFromPathAsync(
+              winrt::to_hstring(body_path));
+        }
+        auto random = co_await body_file.OpenReadAsync();
+        if (pending->IsCancelled()) {
+          throw std::runtime_error("WebDAV request cancelled");
+        }
+        request.Content(HttpStreamContent(random.GetInputStreamAt(0)));
+      }
+      AppendHttpHeaders(request, ArgumentMap(&arguments, "headers"));
+      auto operation = client.SendRequestAsync(
+          request, HttpCompletionOption::ResponseHeadersRead);
+      auto completed = std::make_shared<std::atomic_bool>(false);
+      auto timed_out = std::make_shared<std::atomic_bool>(false);
+      CancelAsyncAfter(operation, completed, timed_out, timeout_ms);
+      pending->SetCancel([operation]() mutable {
+        try {
+          operation.Cancel();
+        } catch (...) {
+          // Cancellation is best effort; the Dart timeout still fails closed.
+        }
+      });
+      response = co_await operation;
+      pending->ClearCancel();
+      completed->store(true, std::memory_order_release);
+      if (pending->IsCancelled()) {
+        throw std::runtime_error("WebDAV request cancelled");
+      }
+      const auto status = static_cast<int32_t>(response.StatusCode());
+      if (!follow_redirects || status < 300 || status >= 400 ||
+          redirects >= max_redirects) {
+        break;
+      }
+      winrt::hstring location;
+      try {
+        location = response.Headers().Lookup(L"Location");
+      } catch (...) {
+        location = winrt::hstring();
+      }
+      if (location.empty()) break;
+      const auto next_uri = current_uri.CombineUri(location);
+      if (_wcsicmp(next_uri.SchemeName().c_str(), L"https") != 0 ||
+          _wcsicmp(next_uri.Host().c_str(), current_uri.Host().c_str()) != 0) {
+        // Never forward authorization headers across origins or to HTTP.
+        break;
+      }
+      current_uri = next_uri;
+      ++redirects;
+    }
+    auto input = winrt::Windows::Storage::Streams::IInputStream{nullptr};
+    if (response.Content() != nullptr) {
+      auto input_operation = response.Content().ReadAsInputStreamAsync();
+      pending->SetCancel([input_operation]() mutable {
+        try {
+          input_operation.Cancel();
+        } catch (...) {
+        }
+      });
+      input = co_await input_operation;
+      pending->ClearCancel();
+      if (pending->IsCancelled()) throw std::runtime_error("WebDAV request cancelled");
+    }
+    auto session = std::make_shared<WebDavSession>();
+    session->client = std::move(client);
+    session->response = std::move(response);
+    session->input = std::move(input);
+    if (session->input != nullptr) {
+      session->reader = DataReader(session->input);
+      session->reader.InputStreamOptions(InputStreamOptions::Partial);
+    }
+    {
+      std::lock_guard<std::mutex> lock(g_webdav_mutex);
+      const auto pending_found = g_webdav_pending.find(request_id);
+      if (pending_found == g_webdav_pending.end() ||
+          pending_found->second != pending || pending->IsCancelled()) {
+        throw std::runtime_error("WebDAV request cancelled");
+      }
+      g_webdav_sessions.emplace(request_id, session);
+    }
+    if (IsAlive(alive)) {
+      result->Success(EncodableMap{
+          {EncodableValue("id"), EncodableValue(request_id)},
+          {EncodableValue("statusCode"),
+           EncodableValue(static_cast<int32_t>(session->response.StatusCode()))},
+          {EncodableValue("statusMessage"),
+           EncodableValue(winrt::to_string(session->response.ReasonPhrase()))},
+          {EncodableValue("headers"), EncodableValue(ResponseHeaders(session->response))},
+          {EncodableValue("transport"), EncodableValue("winrt_http_client")},
+          {EncodableValue("timedOut"), EncodableValue(false)}});
+    }
+  } catch (const winrt::hresult_error&) {
+    if (!request_id.empty()) {
+      std::lock_guard<std::mutex> lock(g_webdav_mutex);
+      g_webdav_pending.erase(request_id);
+    }
+    if (IsAlive(alive)) {
+      result->Error("webdav_failed", "Windows WebDAV request failed.");
+    }
+  } catch (const std::exception&) {
+    if (!request_id.empty()) {
+      std::lock_guard<std::mutex> lock(g_webdav_mutex);
+      g_webdav_pending.erase(request_id);
+    }
+    if (IsAlive(alive)) {
+      result->Error("webdav_failed", "Windows WebDAV request failed.");
+    }
+  }
+}
+
+winrt::fire_and_forget WebDavReadAsync(
+    flutter::EncodableValue arguments, SharedResult result,
+    std::shared_ptr<std::atomic_bool> alive) {
+  std::shared_ptr<WebDavSession> session;
+  std::shared_ptr<WebDavPendingOperation> pending;
+  try {
+    const auto id = ArgumentString(&arguments, "id");
+    const auto max_bytes = std::clamp<int64_t>(
+        ArgumentInt64(&arguments, "maxBytes", 64 * 1024), 1, 64 * 1024);
+    const auto timeout_ms = std::clamp<int64_t>(
+        ArgumentInt64(&arguments, "timeoutMs", 30000), 1, 24 * 60 * 60 * 1000);
+    {
+      std::lock_guard<std::mutex> lock(g_webdav_mutex);
+      const auto found = g_webdav_sessions.find(id);
+      if (found == g_webdav_sessions.end()) throw std::runtime_error("unknown WebDAV request");
+      session = found->second;
+      const auto pending_found = g_webdav_pending.find(id);
+      if (pending_found == g_webdav_pending.end()) {
+        throw std::runtime_error("unknown WebDAV request state");
+      }
+      pending = pending_found->second;
+    }
+    if (pending->IsCancelled()) throw std::runtime_error("WebDAV request cancelled");
+    if (session->input == nullptr) {
+      if (IsAlive(alive)) result->Success(EncodableMap{
+          {EncodableValue("bytes"), EncodableValue(std::vector<uint8_t>{})},
+          {EncodableValue("eof"), EncodableValue(true)}});
+      co_return;
+    }
+    if (session->reader == nullptr) {
+      if (IsAlive(alive)) result->Success(EncodableMap{
+          {EncodableValue("bytes"), EncodableValue(std::vector<uint8_t>{})},
+          {EncodableValue("eof"), EncodableValue(true)}});
+      co_return;
+    }
+    auto operation = session->reader.LoadAsync(static_cast<uint32_t>(max_bytes));
+    auto completed = std::make_shared<std::atomic_bool>(false);
+    auto timed_out = std::make_shared<std::atomic_bool>(false);
+    CancelAsyncAfter(operation, completed, timed_out, timeout_ms);
+    pending->SetCancel([operation]() mutable {
+      try {
+        operation.Cancel();
+      } catch (...) {
+        // The Dart side reports the bounded read failure to the caller.
+      }
+    });
+    const auto loaded = co_await operation;
+    pending->ClearCancel();
+    completed->store(true, std::memory_order_release);
+    if (pending->IsCancelled()) throw std::runtime_error("WebDAV request cancelled");
+    std::vector<uint8_t> bytes(loaded);
+    if (loaded != 0) session->reader.ReadBytes(bytes);
+    if (IsAlive(alive)) result->Success(EncodableMap{
+        {EncodableValue("bytes"), EncodableValue(bytes)},
+        {EncodableValue("eof"), EncodableValue(loaded == 0)},
+        {EncodableValue("timedOut"), EncodableValue(false)}});
+  } catch (const winrt::hresult_error&) {
+    const auto id = ArgumentString(&arguments, "id");
+    if (!id.empty()) {
+      std::lock_guard<std::mutex> lock(g_webdav_mutex);
+      g_webdav_pending.erase(id);
+    }
+    if (IsAlive(alive)) result->Error("webdav_failed", "Windows WebDAV read failed.");
+  } catch (const std::exception&) {
+    const auto id = ArgumentString(&arguments, "id");
+    if (!id.empty()) {
+      std::lock_guard<std::mutex> lock(g_webdav_mutex);
+      g_webdav_pending.erase(id);
+    }
+    if (IsAlive(alive)) result->Error("webdav_failed", "Windows WebDAV read failed.");
+  }
+}
+
+void WebDavClose(const flutter::EncodableValue& arguments) {
+  const auto id = ArgumentString(&arguments, "id");
+  std::shared_ptr<WebDavPendingOperation> pending;
+  std::shared_ptr<WebDavSession> session;
+  {
+    std::lock_guard<std::mutex> lock(g_webdav_mutex);
+    const auto session_found = g_webdav_sessions.find(id);
+    if (session_found != g_webdav_sessions.end()) {
+      session = session_found->second;
+      g_webdav_sessions.erase(session_found);
+    }
+    const auto found = g_webdav_pending.find(id);
+    if (found != g_webdav_pending.end()) {
+      pending = found->second;
+      g_webdav_pending.erase(found);
+    }
+  }
+  if (pending != nullptr) pending->RequestCancel();
+  if (session != nullptr && session->reader != nullptr) {
+    try {
+      session->reader.Close();
+    } catch (...) {
+      // Closing after cancellation is best effort and must not escape the
+      // method-channel callback.
+    }
+  }
+}
+
+winrt::fire_and_forget WebDavCleanupBodyAsync(
+    flutter::EncodableValue arguments, SharedResult result,
+    std::shared_ptr<std::atomic_bool> alive) {
+  try {
+    const auto token = ArgumentString(&arguments, "token");
+    const auto generation = ArgumentString(&arguments, "generation");
+    const auto key = ArgumentString(&arguments, "key");
+    if (token.empty() || generation.empty() || key.empty()) {
+      throw std::invalid_argument("invalid WebDAV staging cleanup request");
+    }
+    auto root = co_await AuthorizedFolderAsync(winrt::to_hstring(token),
+                                               winrt::to_hstring(generation));
+    auto file = co_await StageFileAsync(root, key);
+    co_await file.DeleteAsync();
+    if (IsAlive(alive)) {
+      result->Success(EncodableMap{{EncodableValue("status"),
+                                   EncodableValue("ok")}});
+    }
+  } catch (const winrt::hresult_error&) {
+    if (IsAlive(alive)) result->Error("webdav_cleanup_failed", "WebDAV staging cleanup failed.");
+  } catch (const std::exception& error) {
+    if (IsAlive(alive)) result->Error("webdav_cleanup_failed", error.what());
+  }
+}
 
 // FolderPicker, restore, and the private LocalState writes all use fixed
 // filenames. Keep those broker operations serialized so two coroutines cannot
@@ -500,10 +1007,9 @@ EncodableValue CredentialDelete(const flutter::EncodableValue& arguments) {
 }
 
 EncodableValue BrokerCapabilities() {
-  // StorageFile.OpenTransactedWriteAsync/StorageStreamTransaction is a
-  // possible future replace primitive, but this broker has not completed the
-  // provider capability and post-commit verification gate. Do not advertise
-  // it as compare-and-swap yet.
+  // These are conservative operations: each verifies the expected bytes,
+  // keeps a root-scoped backup, publishes/deletes, and verifies the result.
+  // They intentionally do not claim provider-level atomic compare-and-swap.
   return EncodableMap{
       {EncodableValue("status"), EncodableValue("ok")},
       {EncodableValue("platform"), EncodableValue("windows")},
@@ -511,11 +1017,11 @@ EncodableValue BrokerCapabilities() {
       {EncodableValue("staging"),
        EncodableValue("persistent_after_finish_root_scoped")},
       {EncodableValue("atomicCreate"),
-       EncodableValue("fail_if_exists_verified")},
+       EncodableValue("verified_create_recovery")},
       {EncodableValue("conditionalReplace"),
-       EncodableValue("unsupported_appcontainer_provider")},
+       EncodableValue("verified_backup_replace")},
       {EncodableValue("conditionalDelete"),
-       EncodableValue("unsupported_appcontainer_provider")},
+       EncodableValue("verified_backup_delete")},
       {EncodableValue("temporaryPermission"), EncodableValue("not_applicable")}};
 }
 
@@ -625,7 +1131,7 @@ std::vector<winrt::hstring> RelativeSegments(const std::string& raw) {
 }
 
 int64_t ArgumentInt64(const flutter::EncodableValue* arguments,
-                      const char* key, int64_t fallback = -1) {
+                      const char* key, int64_t fallback) {
   if (arguments == nullptr) return fallback;
   const auto* map = std::get_if<EncodableMap>(arguments);
   if (map == nullptr) return fallback;
@@ -634,6 +1140,17 @@ int64_t ArgumentInt64(const flutter::EncodableValue* arguments,
   if (const auto* value = std::get_if<int64_t>(&found->second)) return *value;
   if (const auto* value = std::get_if<int32_t>(&found->second)) return *value;
   return fallback;
+}
+
+bool ArgumentBool(const flutter::EncodableValue* arguments, const char* key,
+                  bool fallback) {
+  if (arguments == nullptr) return fallback;
+  const auto* map = std::get_if<EncodableMap>(arguments);
+  if (map == nullptr) return fallback;
+  const auto found = map->find(EncodableValue(key));
+  if (found == map->end()) return fallback;
+  const auto* value = std::get_if<bool>(&found->second);
+  return value == nullptr ? fallback : *value;
 }
 
 std::vector<uint8_t> ArgumentBytes(const flutter::EncodableValue* arguments,
@@ -742,6 +1259,20 @@ StageFileAsync(const StorageFolder& root, const std::string& key) {
   co_return file;
 }
 
+winrt::Windows::Foundation::IAsyncOperation<StorageFile>
+StageBackupFileAsync(const StorageFolder& root, const std::string& key) {
+  if (!IsUuidText(key)) {
+    throw std::invalid_argument("invalid backup handle");
+  }
+  auto folder = co_await StageFolderAsync(root);
+  auto file = co_await folder.GetFileAsync(
+      winrt::to_hstring(key + ".backup"));
+  if (!co_await IsSafeFileAsync(file)) {
+    throw std::runtime_error("backup object is a reparse point");
+  }
+  co_return file;
+}
+
 // Returns "<lowercase sha256>:<decimal length>" so the coroutine result is a
 // WinRT type while retaining both values for protocol verification.
 winrt::Windows::Foundation::IAsyncOperation<winrt::hstring>
@@ -835,6 +1366,113 @@ HashedFile ParseHashedFile(const winrt::hstring& encoded) {
   const auto length = std::stoull(length_text, &consumed);
   if (consumed != length_text.size()) throw std::runtime_error("invalid hash length");
   return HashedFile{text.substr(0, separator), length};
+}
+
+winrt::Windows::Foundation::IAsyncAction RestoreBackupAsync(
+    const StorageFolder& root,
+    const StorageFile& backup,
+    const std::string& key,
+    const std::string& path,
+    const winrt::hstring& token,
+    const winrt::hstring& generation) {
+  const auto parts = RelativeSegments(path);
+  auto parent = co_await ResolveParentAsync(root, path);
+  const auto original_name = winrt::to_string(parts.back());
+  std::string restore_name = original_name;
+  try {
+    co_await ResolveFileAsync(root, path);
+    restore_name = original_name + ".synctune-recovery-" + key;
+  } catch (const winrt::hresult_error& error) {
+    if (error.code() != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) throw;
+  }
+  co_await backup.MoveAsync(parent, winrt::to_hstring(restore_name),
+                            NameCollisionOption::FailIfExists);
+  auto restored = co_await parent.GetFileAsync(winrt::to_hstring(restore_name));
+  if (!co_await IsSafeFileAsync(restored)) {
+    throw std::runtime_error("restored recovery file is a reparse point");
+  }
+  co_await AuthorizedFolderAsync(token, generation);
+}
+
+winrt::Windows::Foundation::IAsyncOperation<StorageFile> EnsureBackupAsync(
+    const StorageFolder& root,
+    const StorageFile& source,
+    const std::string& key,
+    const std::string& path,
+    const std::string& expected_hash,
+    const winrt::hstring& token,
+    const winrt::hstring& generation) {
+  StorageFile backup{nullptr};
+  bool missing = false;
+  bool moved = false;
+  try {
+    backup = co_await StageBackupFileAsync(root, key);
+  } catch (const winrt::hresult_error& error) {
+    if (error.code() != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) throw;
+    missing = true;
+  }
+  if (missing) {
+    auto folder = co_await StageFolderAsync(root);
+    bool copy_failed = false;
+    try {
+      co_await source.MoveAsync(
+          folder, winrt::to_hstring(key + ".backup"),
+          NameCollisionOption::FailIfExists);
+      moved = true;
+      backup = co_await StageBackupFileAsync(root, key);
+    } catch (...) {
+      copy_failed = true;
+    }
+    if (copy_failed) {
+      // A second process may have completed the durable backup between the
+      // lookup and the copy. Re-read it and verify that exact backup.
+      backup = co_await StageBackupFileAsync(root, key);
+    }
+  }
+  const auto hash = ParseHashedFile(co_await HashFileAsync(backup));
+  co_await AuthorizedFolderAsync(token, generation);
+  if (hash.sha256 != expected_hash) {
+    if (moved) {
+      co_await RestoreBackupAsync(root, backup, key, path, token, generation);
+    }
+    throw std::runtime_error("recoverable backup content changed");
+  }
+  co_return backup;
+}
+
+winrt::Windows::Foundation::IAsyncOperation<StorageFile> PublishFileAsync(
+    const StorageFolder& root,
+    const StorageFile& source,
+    const std::string& path) {
+  const auto parts = RelativeSegments(path);
+  auto parent = co_await ResolveParentAsync(root, path);
+  auto published = co_await source.CopyAsync(
+      parent, parts.back(), NameCollisionOption::FailIfExists);
+  if (!co_await IsSafeFileAsync(published)) {
+    throw std::runtime_error("published file is a reparse point");
+  }
+  co_return published;
+}
+
+winrt::Windows::Foundation::IAsyncOperation<winrt::hstring>
+PublishAndVerifyAsync(const StorageFolder& root,
+                      const StorageFile& source,
+                      const std::string& path,
+                      const std::string& expected_hash,
+                      int64_t expected_length,
+                      const winrt::hstring& token,
+                      const winrt::hstring& generation) {
+  auto published = co_await PublishFileAsync(root, source, path);
+  const auto hash = ParseHashedFile(co_await HashFileAsync(published));
+  co_await AuthorizedFolderAsync(token, generation);
+  if (hash.sha256 != expected_hash ||
+      hash.length != static_cast<uint64_t>(expected_length)) {
+    // Keep unknown published bytes visible for reconciliation. They may have
+    // changed after publication; deleting them would turn a conflict into
+    // data loss.
+    throw std::runtime_error("published content verification failed");
+  }
+  co_return winrt::to_hstring(hash.sha256 + ":" + std::to_string(hash.length));
 }
 
 const EncodableMap* ArgumentMap(const flutter::EncodableValue* arguments,
@@ -1237,53 +1875,132 @@ winrt::fire_and_forget CommitStagedAsync(
       if (error.code() != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) throw;
     }
     if (condition_type == "createOnly") {
-      if (has_existing) throw std::runtime_error("local create-only precondition failed");
+      if (has_existing) {
+        const auto existing_hash = ParseHashedFile(co_await HashFileAsync(existing));
+        co_await AuthorizedFolderAsync(winrt::to_hstring(token_text),
+                                       winrt::to_hstring(generation_text));
+        if (existing_hash.sha256 != staged_hash.sha256 ||
+            existing_hash.length != staged_hash.length) {
+          throw std::runtime_error("local create-only precondition failed");
+        }
+        if (IsAlive(alive)) {
+          result->Success(EncodableMap{
+              {EncodableValue("status"), EncodableValue("ok")},
+              {EncodableValue("path"), EncodableValue(path)},
+              {EncodableValue("sha256"), EncodableValue(existing_hash.sha256)},
+              {EncodableValue("length"), EncodableValue(static_cast<int64_t>(existing_hash.length))},
+              {EncodableValue("mode"), EncodableValue("already_committed")}});
+        }
+        co_return;
+      }
+      const auto published_hash = ParseHashedFile(co_await PublishAndVerifyAsync(
+          root, stage, path, expected, expected_length,
+          winrt::to_hstring(token_text), winrt::to_hstring(generation_text)));
+      if (IsAlive(alive)) {
+        result->Success(EncodableMap{
+            {EncodableValue("status"), EncodableValue("ok")},
+            {EncodableValue("path"), EncodableValue(path)},
+            {EncodableValue("sha256"), EncodableValue(published_hash.sha256)},
+            {EncodableValue("length"), EncodableValue(static_cast<int64_t>(published_hash.length))},
+            {EncodableValue("mode"), EncodableValue("verified_create_recovery")}});
+      }
+      co_return;
     } else if (condition_type == "matchSha256") {
       const auto match = MapString(condition, "sha256");
-      if (!has_existing || !IsSha256Text(match)) {
-        throw std::runtime_error("local hash precondition failed");
+      if (!IsSha256Text(match)) throw std::runtime_error("local hash precondition is invalid");
+      if (has_existing) {
+        const auto existing_hash = ParseHashedFile(co_await HashFileAsync(existing));
+        co_await AuthorizedFolderAsync(winrt::to_hstring(token_text),
+                                       winrt::to_hstring(generation_text));
+        if (existing_hash.sha256 == staged_hash.sha256 &&
+            existing_hash.length == staged_hash.length) {
+          if (IsAlive(alive)) {
+            result->Success(EncodableMap{
+                {EncodableValue("status"), EncodableValue("ok")},
+                {EncodableValue("path"), EncodableValue(path)},
+                {EncodableValue("sha256"), EncodableValue(existing_hash.sha256)},
+                {EncodableValue("length"), EncodableValue(static_cast<int64_t>(existing_hash.length))},
+                {EncodableValue("mode"), EncodableValue("already_committed")}});
+          }
+          co_return;
+        }
+        if (existing_hash.sha256 != match) {
+          throw std::runtime_error("local hash precondition failed");
+        }
+        try {
+          co_await StageBackupFileAsync(root, key);
+          throw std::runtime_error(
+              "recovery backup and target both exist; rescan required");
+        } catch (const winrt::hresult_error& missing) {
+          if (missing.code() != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) {
+            throw;
+          }
+        }
+        auto backup = co_await EnsureBackupAsync(
+            root, existing, key, path, match, winrt::to_hstring(token_text),
+            winrt::to_hstring(generation_text));
+        std::exception_ptr publish_error;
+        std::optional<HashedFile> published_hash;
+        try {
+          published_hash = ParseHashedFile(co_await PublishAndVerifyAsync(
+              root, stage, path, expected, expected_length,
+              winrt::to_hstring(token_text), winrt::to_hstring(generation_text)));
+        } catch (...) {
+          publish_error = std::current_exception();
+        }
+        if (publish_error != nullptr) {
+          bool target_missing = false;
+          try {
+            co_await ResolveFileAsync(root, path);
+          } catch (const winrt::hresult_error& missing) {
+            if (missing.code() == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) {
+              target_missing = true;
+            } else {
+              throw;
+            }
+          }
+          if (target_missing) co_await PublishFileAsync(root, backup, path);
+          std::rethrow_exception(publish_error);
+        }
+        if (published_hash.has_value() && IsAlive(alive)) {
+          result->Success(EncodableMap{
+              {EncodableValue("status"), EncodableValue("ok")},
+              {EncodableValue("path"), EncodableValue(path)},
+              {EncodableValue("sha256"), EncodableValue(published_hash->sha256)},
+              {EncodableValue("length"), EncodableValue(static_cast<int64_t>(published_hash->length))},
+              {EncodableValue("mode"), EncodableValue("verified_backup_replace")}});
+        }
+        co_return;
       }
-      const auto existing_hash = ParseHashedFile(co_await HashFileAsync(existing));
-      co_await AuthorizedFolderAsync(winrt::to_hstring(token_text),
-                                     winrt::to_hstring(generation_text));
-      if (existing_hash.sha256 != match) throw std::runtime_error("local hash precondition failed");
-      throw std::runtime_error("atomic conditional replace is unsupported by AppContainer broker");
+      // A prior attempt may have deleted the target after making its durable
+      // backup. Resume that exact operation instead of inventing a new copy.
+      StorageFile backup{nullptr};
+      try {
+        backup = co_await StageBackupFileAsync(root, key);
+      } catch (const winrt::hresult_error& missing) {
+        if (missing.code() == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) {
+          throw std::runtime_error("local replace target missing; rescan required");
+        }
+        throw;
+      }
+      const auto backup_hash = ParseHashedFile(co_await HashFileAsync(backup));
+      if (backup_hash.sha256 != match) {
+        throw std::runtime_error("recoverable backup content changed");
+      }
+      const auto published_hash = ParseHashedFile(co_await PublishAndVerifyAsync(
+          root, stage, path, expected, expected_length,
+          winrt::to_hstring(token_text), winrt::to_hstring(generation_text)));
+      if (IsAlive(alive)) {
+        result->Success(EncodableMap{
+            {EncodableValue("status"), EncodableValue("ok")},
+            {EncodableValue("path"), EncodableValue(path)},
+            {EncodableValue("sha256"), EncodableValue(published_hash.sha256)},
+            {EncodableValue("length"), EncodableValue(static_cast<int64_t>(published_hash.length))},
+            {EncodableValue("mode"), EncodableValue("verified_backup_replace")}});
+      }
+      co_return;
     } else {
       throw std::invalid_argument("unsupported local condition");
-    }
-    auto parent = co_await ResolveParentAsync(root, path);
-    const auto parts = RelativeSegments(path);
-    co_await AuthorizedFolderAsync(winrt::to_hstring(token_text),
-                                   winrt::to_hstring(generation_text));
-    if (!IsAlive(alive)) co_return;
-    auto published = co_await stage.CopyAsync(parent, parts.back(),
-                                              NameCollisionOption::FailIfExists);
-    if (!co_await IsSafeFileAsync(published)) {
-      throw std::runtime_error("published file is a reparse point");
-    }
-    const auto published_hash = ParseHashedFile(co_await HashFileAsync(published));
-    co_await AuthorizedFolderAsync(winrt::to_hstring(token_text),
-                                   winrt::to_hstring(generation_text));
-    if (published_hash.sha256 != expected ||
-        published_hash.length != static_cast<uint64_t>(expected_length)) {
-      throw std::runtime_error("published content verification failed; staging retained");
-    }
-    co_await AuthorizedFolderAsync(winrt::to_hstring(token_text),
-                                   winrt::to_hstring(generation_text));
-    if (!IsAlive(alive)) co_return;
-    try {
-      co_await stage.DeleteAsync();
-    } catch (...) {
-      // An orphaned stage is recoverable evidence after verified publication.
-    }
-    co_await AuthorizedFolderAsync(winrt::to_hstring(token_text),
-                                   winrt::to_hstring(generation_text));
-    if (IsAlive(alive)) {
-      result->Success(EncodableMap{
-          {EncodableValue("status"), EncodableValue("ok")},
-          {EncodableValue("path"), EncodableValue(path)},
-          {EncodableValue("sha256"), EncodableValue(published_hash.sha256)},
-          {EncodableValue("length"), EncodableValue(static_cast<int64_t>(published_hash.length))}});
     }
   } catch (const winrt::hresult_error& error) {
     if (IsAlive(alive)) result->Error("broker_error", winrt::to_string(error.message()));
@@ -1304,6 +2021,7 @@ winrt::fire_and_forget DeleteLocalAsync(
     const auto token_text = BrokerToken(arguments);
     const auto generation_text = ArgumentString(&arguments, "generation");
     const auto path = ArgumentString(&arguments, "path");
+    const auto backup_key = ArgumentString(&arguments, "backupKey");
     const auto* condition = ArgumentMap(&arguments, "condition");
     const auto expected = MapString(condition, "sha256");
     if (token_text.empty() || generation_text.empty() || path.empty() || condition == nullptr ||
@@ -1311,14 +2029,80 @@ winrt::fire_and_forget DeleteLocalAsync(
          !IsSha256Text(expected)) {
       throw std::invalid_argument("invalid local delete request");
     }
+    if (!IsUuidText(backup_key)) {
+      throw std::invalid_argument("invalid local delete backup handle");
+    }
     auto root = co_await AuthorizedFolderAsync(winrt::to_hstring(token_text),
                                                winrt::to_hstring(generation_text));
-    const auto file = co_await ResolveFileAsync(root, path);
+    StorageFile file{nullptr};
+    bool target_missing = false;
+    try {
+      file = co_await ResolveFileAsync(root, path);
+    } catch (const winrt::hresult_error& missing) {
+      if (missing.code() == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) {
+        target_missing = true;
+      } else {
+        throw;
+      }
+    }
+    if (target_missing) {
+      StorageFile backup{nullptr};
+      bool backup_missing = false;
+      try {
+        backup = co_await StageBackupFileAsync(root, backup_key);
+      } catch (const winrt::hresult_error& no_backup) {
+        if (no_backup.code() == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) {
+          backup_missing = true;
+        } else {
+          throw;
+        }
+      }
+      if (!backup_missing) {
+        const auto backup_hash = ParseHashedFile(co_await HashFileAsync(backup));
+        if (backup_hash.sha256 == expected && IsAlive(alive)) {
+          result->Success(EncodableMap{
+              {EncodableValue("status"), EncodableValue("ok")},
+              {EncodableValue("path"), EncodableValue(path)},
+              {EncodableValue("sha256"), EncodableValue(expected)},
+              {EncodableValue("mode"), EncodableValue("already_deleted_recovery")}});
+          co_return;
+        }
+      }
+      throw std::runtime_error("local delete target missing; rescan required");
+    }
     const auto hash = ParseHashedFile(co_await HashFileAsync(file));
     co_await AuthorizedFolderAsync(winrt::to_hstring(token_text),
                                    winrt::to_hstring(generation_text));
     if (hash.sha256 != expected) throw std::runtime_error("local delete precondition failed");
-    throw std::runtime_error("atomic conditional delete is unsupported by AppContainer broker");
+    try {
+      co_await StageBackupFileAsync(root, backup_key);
+      throw std::runtime_error(
+          "recovery backup and target both exist; rescan required");
+    } catch (const winrt::hresult_error& missing) {
+      if (missing.code() != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) throw;
+    }
+    co_await EnsureBackupAsync(
+        root, file, backup_key, path, expected, winrt::to_hstring(token_text),
+        winrt::to_hstring(generation_text));
+    co_await AuthorizedFolderAsync(winrt::to_hstring(token_text),
+                                   winrt::to_hstring(generation_text));
+    bool target_still_present = false;
+    try {
+      co_await ResolveFileAsync(root, path);
+      target_still_present = true;
+    } catch (const winrt::hresult_error& missing) {
+      if (missing.code() != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) throw;
+    }
+    if (target_still_present) {
+      throw std::runtime_error("provider did not move the verified delete target");
+    }
+    if (IsAlive(alive)) {
+      result->Success(EncodableMap{
+          {EncodableValue("status"), EncodableValue("ok")},
+          {EncodableValue("path"), EncodableValue(path)},
+          {EncodableValue("sha256"), EncodableValue(expected)},
+          {EncodableValue("mode"), EncodableValue("verified_backup_delete")}});
+    }
   } catch (const winrt::hresult_error& error) {
     if (IsAlive(alive)) result->Error("broker_error", winrt::to_string(error.message()));
   } catch (const std::exception& error) {
@@ -1552,6 +2336,8 @@ winrt::fire_and_forget PickFolderAsync(
     result->Success(EncodableMap{
         {EncodableValue("status"), EncodableValue("ok")},
         {EncodableValue("token"), EncodableValue(winrt::to_string(token))},
+        {EncodableValue("generation"),
+         EncodableValue(winrt::to_string(active->generation))},
         {EncodableValue("reopen"), EncodableValue(
                                       reopened.Path() == folder.Path() ? "ok" : "failed")},
         {EncodableValue("fileIo"), EncodableValue(marker_round_trip ? "ok" : "failed")},
@@ -1617,6 +2403,9 @@ winrt::fire_and_forget RestoreFolderAsync(
     if (!IsAlive(alive)) co_return;
     result->Success(EncodableMap{
         {EncodableValue("status"), EncodableValue(content_matches ? "ok" : "failed")},
+        {EncodableValue("token"), EncodableValue(winrt::to_string(token))},
+        {EncodableValue("generation"),
+         EncodableValue(winrt::to_string(active->generation))},
         {EncodableValue("path"), EncodableValue(winrt::to_string(folder.Path()))},
         {EncodableValue("fileIo"), EncodableValue(content_matches ? "ok" : "failed")},
         {EncodableValue("marker"), EncodableValue(winrt::to_string(marker_name))},
@@ -1857,6 +2646,35 @@ std::unique_ptr<flutter::MethodChannel<>> RegisterProbeChannel(
         result->Success(CredentialDelete(arguments));
       } else if (call.method_name() == "brokerCapabilities") {
         result->Success(BrokerCapabilities());
+      } else if (call.method_name() == "httpsProbe") {
+        auto shared_result = std::shared_ptr<MethodResult>(result.release());
+        HttpsProbeAsync(std::move(shared_result), alive);
+      } else if (call.method_name() == "webdavOpen") {
+        auto shared_result = std::shared_ptr<MethodResult>(result.release());
+        auto arguments = call.arguments() == nullptr
+                             ? EncodableValue()
+                             : *call.arguments();
+        WebDavOpenAsync(std::move(arguments), std::move(shared_result), alive);
+      } else if (call.method_name() == "webdavRead") {
+        auto shared_result = std::shared_ptr<MethodResult>(result.release());
+        auto arguments = call.arguments() == nullptr
+                             ? EncodableValue()
+                             : *call.arguments();
+        WebDavReadAsync(std::move(arguments), std::move(shared_result), alive);
+      } else if (call.method_name() == "webdavClose" ||
+                 call.method_name() == "webdavCancel") {
+        auto arguments = call.arguments() == nullptr
+                             ? EncodableValue()
+                             : *call.arguments();
+        WebDavClose(arguments);
+        result->Success(EncodableValue());
+      } else if (call.method_name() == "webdavCleanupBody") {
+        auto shared_result = std::shared_ptr<MethodResult>(result.release());
+        auto arguments = call.arguments() == nullptr
+                             ? EncodableValue()
+                             : *call.arguments();
+        WebDavCleanupBodyAsync(std::move(arguments), std::move(shared_result),
+                               alive);
       } else if (call.method_name() == "privateDatabasePath") {
         result->Success(PrivateDatabasePath());
       } else if (call.method_name() == "processInfo") {
