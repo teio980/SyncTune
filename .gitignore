@@ -38,6 +38,15 @@ keystore.properties
 # Machine-specific Gradle JVM selection
 **/gradle-daemon-jvm.properties
 
+# Build and release artifacts
+**/build/
+/dist/
+*.apk
+*.aab
+*.ipa
+*.msix
+*.appx
+
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line
 # is commented out by default.
