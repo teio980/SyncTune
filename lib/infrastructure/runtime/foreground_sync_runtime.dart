@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:synctune_sync_core/synctune_sync_core.dart';
 
 import '../../app/sync/sync_gate.dart';
+import '../platform/sync_notification_port.dart';
 import 'sync_failure_message.dart';
 
 /// The identity captured by one foreground run. A changed root generation or
@@ -205,6 +206,8 @@ final class ForegroundSyncRuntime
     RuntimeTokenGenerator? tokenGenerator,
     RuntimeIdentityGenerator? identityGenerator,
     this.interval = const Duration(minutes: 15),
+    this.notificationPort,
+    this.allowBackgroundExecution = true,
   }) : _clock = clock, // ignore: prefer_initializing_formals
        _timers = timers, // ignore: prefer_initializing_formals
        _lifecycle = lifecycle, // ignore: prefer_initializing_formals
@@ -220,6 +223,8 @@ final class ForegroundSyncRuntime
 
   final SyncRuntimeTargetPort targetPort;
   final ConfirmedSyncRunner runner;
+  final SyncNotificationPort? notificationPort;
+  final bool allowBackgroundExecution;
   final RuntimeClock _clock;
   final RuntimeTimerFactory _timers;
   final ForegroundLifecyclePort? _lifecycle;
@@ -343,19 +348,25 @@ final class ForegroundSyncRuntime
 
   @override
   Future<void> run() {
-    if (_disposed || !_foreground) return _cancelledRequest();
+    if (_disposed || (!_foreground && !allowBackgroundExecution)) {
+      return _cancelledRequest();
+    }
     return _request('Manual');
   }
 
   @override
   Future<void> requestManual() {
-    if (_disposed || !_foreground) return _cancelledRequest();
+    if (_disposed || (!_foreground && !allowBackgroundExecution)) {
+      return _cancelledRequest();
+    }
     return _request('Manual');
   }
 
   @override
   Future<void> retry() {
-    if (_disposed || !_foreground) return _cancelledRequest();
+    if (_disposed || (!_foreground && !allowBackgroundExecution)) {
+      return _cancelledRequest();
+    }
     return _request(
       _pendingImportTarget == targetPort.current?.identity ||
               _snapshot.requiresRemoteImport
@@ -366,7 +377,9 @@ final class ForegroundSyncRuntime
 
   @override
   Future<void> importCloudMusic() {
-    if (_disposed || !_foreground) return _cancelledRequest();
+    if (_disposed || (!_foreground && !allowBackgroundExecution)) {
+      return _cancelledRequest();
+    }
     // An explicit import must not be silently coalesced into a normal run.
     if (_activeRun != null) {
       return Future<void>.error(
@@ -394,6 +407,7 @@ final class ForegroundSyncRuntime
           message: 'Sync canceled',
         ),
       );
+      unawaited(notificationPort?.onSyncCancelled());
       return;
     }
     _publish(
@@ -404,6 +418,7 @@ final class ForegroundSyncRuntime
         lastStartedAtUtc: _snapshot.lastStartedAtUtc,
       ),
     );
+    unawaited(notificationPort?.onSyncCancelled());
     source.cancel();
     try {
       await _activeRun;
@@ -422,17 +437,19 @@ final class ForegroundSyncRuntime
   void onPause() {
     if (_disposed) return;
     _foreground = false;
-    _timer?.cancel();
-    _timer = null;
-    if (_source != null) unawaited(cancel());
-    if (_activeRun == null) {
-      _publish(
-        const ForegroundRuntimeSnapshot(
-          phase: ForegroundRunPhase.idle,
-          message:
-              'The app is suspended. Sync will resume when the app returns.',
-        ),
-      );
+    if (!allowBackgroundExecution) {
+      _timer?.cancel();
+      _timer = null;
+      if (_source != null) unawaited(cancel());
+      if (_activeRun == null) {
+        _publish(
+          const ForegroundRuntimeSnapshot(
+            phase: ForegroundRunPhase.idle,
+            message:
+                'The app is suspended. Sync will resume when the app returns.',
+          ),
+        );
+      }
     }
   }
 
@@ -479,7 +496,9 @@ final class ForegroundSyncRuntime
   }
 
   Future<void> _request(String reason) {
-    if (_disposed || !_foreground) return _cancelledRequest();
+    if (_disposed || (!_foreground && !allowBackgroundExecution)) {
+      return _cancelledRequest();
+    }
     if (_activeRun != null) {
       _pending = true;
       final completer = _pendingBatch ??= Completer<void>();
@@ -518,7 +537,7 @@ final class ForegroundSyncRuntime
     if (!identical(_activeRun, run)) return;
     _activeRun = null;
     _schedule();
-    if (_pending && !_disposed && _foreground) {
+    if (_pending && !_disposed && (_foreground || allowBackgroundExecution)) {
       _pending = false;
       final pending = _pendingBatch;
       _pendingBatch = null;
@@ -571,6 +590,7 @@ final class ForegroundSyncRuntime
     final runToken = _tokenGenerator.newRunToken(_sessionId, ++_sequence);
     final startedAt = _clock.nowUtc;
     DateTime? lastPublishedAt;
+    DateTime? lastNotifiedAt;
     SyncProgress? lastPublished;
     final source = RuntimeCancellationSource(
       onProgress: (progress) {
@@ -600,6 +620,33 @@ final class ForegroundSyncRuntime
             progress: progress,
           ),
         );
+        final shouldNotify = lastNotifiedAt == null ||
+            now.difference(lastNotifiedAt!) >=
+                const Duration(milliseconds: 300) ||
+            progress.completedItems != lastPublished?.completedItems;
+        if (shouldNotify) {
+          lastNotifiedAt = now;
+          final total = progress.totalItems;
+          final path = progress.path;
+          final int? itemProgress =
+              (total != null && total > 0) ? progress.completedItems : null;
+          final int? itemMax =
+              (total != null && total > 0) ? total : null;
+          final fileName =
+              (path != null && path.isNotEmpty) ? path.split('/').last : '';
+          final progressMsg = (total != null && total > 0)
+              ? '${progress.stage} ($itemProgress/$itemMax)${fileName.isNotEmpty ? ': $fileName' : ''}'
+              : '${progress.stage}${fileName.isNotEmpty ? ': $fileName' : ''}';
+          unawaited(
+            notificationPort?.onSyncProgress(
+              title: 'SyncTune Syncing',
+              message: progressMsg,
+              progress: itemProgress,
+              max: itemMax,
+              indeterminate: itemMax == null,
+            ),
+          );
+        }
       },
     );
     _source = source;
@@ -609,6 +656,12 @@ final class ForegroundSyncRuntime
         message: 'Checking sync requirements',
         runToken: runToken,
         lastStartedAtUtc: startedAt,
+      ),
+    );
+    unawaited(
+      notificationPort?.onSyncStarted(
+        title: 'SyncTune Syncing',
+        message: 'Checking sync requirements',
       ),
     );
     try {
@@ -623,16 +676,25 @@ final class ForegroundSyncRuntime
             lastStartedAtUtc: startedAt,
           ),
         );
+        unawaited(notificationPort?.onSyncCancelled());
         throw SyncRuntimeNotReady(gate.message);
       }
+      final syncMessage = reason == 'Import cloud music'
+          ? 'Importing cloud music'
+          : 'Syncing';
       _publish(
         ForegroundRuntimeSnapshot(
           phase: ForegroundRunPhase.running,
-          message: reason == 'Import cloud music'
-              ? 'Importing cloud music'
-              : 'Syncing',
+          message: syncMessage,
           runToken: runToken,
           lastStartedAtUtc: startedAt,
+        ),
+      );
+      unawaited(
+        notificationPort?.onSyncProgress(
+          title: 'SyncTune Syncing',
+          message: syncMessage,
+          indeterminate: true,
         ),
       );
       if (reason == 'Import cloud music') {
@@ -688,6 +750,13 @@ final class ForegroundSyncRuntime
           progress: source.progress,
         ),
       );
+      unawaited(
+        notificationPort?.onSyncFinished(
+          title: 'SyncTune Sync complete',
+          message: 'Music sync completed successfully',
+          success: true,
+        ),
+      );
     } catch (error) {
       if (_disposed) {
         throw const SyncCancelled();
@@ -702,6 +771,7 @@ final class ForegroundSyncRuntime
             progress: source.progress,
           ),
         );
+        unawaited(notificationPort?.onSyncCancelled());
         if (error is SyncCancelled) {
           rethrow;
         }
@@ -716,6 +786,7 @@ final class ForegroundSyncRuntime
             progress: source.progress,
           ),
         );
+        unawaited(notificationPort?.onSyncCancelled());
         rethrow;
       } else {
         _publish(
@@ -728,6 +799,13 @@ final class ForegroundSyncRuntime
             runToken: runToken,
             lastStartedAtUtc: startedAt,
             progress: source.progress,
+          ),
+        );
+        unawaited(
+          notificationPort?.onSyncFinished(
+            title: 'SyncTune Sync failed',
+            message: syncFailureMessage(error),
+            success: false,
           ),
         );
         rethrow;
@@ -778,7 +856,7 @@ final class ForegroundSyncRuntime
           message: 'Sync root folder access required',
         ),
       );
-    } else if (_foreground && _started) {
+    } else if ((_foreground || allowBackgroundExecution) && _started) {
       if (_activeRun == null) {
         final request = _request('Folder or connection settings changed');
         unawaited(_safeAwait(request));
@@ -807,7 +885,7 @@ final class ForegroundSyncRuntime
 
   void _schedule() {
     if (_disposed ||
-        !_foreground ||
+        (!_foreground && !allowBackgroundExecution) ||
         _activeRun != null ||
         targetPort.current == null) {
       return;

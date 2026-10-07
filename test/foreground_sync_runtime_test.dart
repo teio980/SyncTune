@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:synctune_sync_core/synctune_sync_core.dart';
 
 import 'package:synctune/app/sync/sync_gate.dart';
+import 'package:synctune/infrastructure/platform/sync_notification_port.dart';
 import 'package:synctune/infrastructure/runtime/foreground_sync_runtime.dart';
 import 'package:synctune/data/webdav_repository.dart';
 
@@ -312,6 +313,68 @@ void main() {
     expect(runner.targets.last.rootGeneration, 'g2');
     runtime.dispose();
   });
+
+  test('background execution continues running when paused and notifies notificationPort', () async {
+    final target = FakeTargetPort(_target('g1'));
+    final pending = Completer<SyncRunResult>();
+    final runner = FakeRunner()..runResults.add(pending);
+    final notification = FakeNotificationPort();
+    final runtime = ForegroundSyncRuntime(
+      targetPort: target,
+      runner: runner,
+      notificationPort: notification,
+      allowBackgroundExecution: true,
+    );
+    addTearDown(runtime.disposeAndWait);
+
+    final runFuture = runtime.requestManual();
+    await pumpRuntime();
+
+    expect(notification.events.contains('started'), isTrue);
+    expect(runtime.isBusy, isTrue);
+
+    // Pause the app while sync is in flight
+    runtime.onPause();
+    await pumpRuntime();
+
+    // Sync must NOT be cancelled!
+    expect(runtime.isBusy, isTrue);
+    expect(runtime.snapshot.phase, ForegroundRunPhase.running);
+
+    // Complete the run while in background
+    pending.complete(successfulResult);
+    await runFuture;
+    await pumpRuntime();
+
+    expect(runtime.snapshot.phase, ForegroundRunPhase.succeeded);
+    expect(notification.events.contains('finished:true'), isTrue);
+  });
+
+  test('background execution disabled cancels sync on pause', () async {
+    final target = FakeTargetPort(_target('g1'));
+    final pending = Completer<SyncRunResult>();
+    final runner = FakeRunner()..runResults.add(pending);
+    final notification = FakeNotificationPort();
+    final runtime = ForegroundSyncRuntime(
+      targetPort: target,
+      runner: runner,
+      notificationPort: notification,
+      allowBackgroundExecution: false,
+    );
+    addTearDown(runtime.disposeAndWait);
+
+    final runFuture = runtime.requestManual();
+    final outcome = expectLater(runFuture, throwsA(isA<SyncCancelled>()));
+    await pumpRuntime();
+
+    runtime.onPause();
+    await pumpRuntime();
+
+    pending.complete(successfulResult);
+    await outcome;
+    expect(runtime.snapshot.phase, ForegroundRunPhase.cancelled);
+    expect(notification.events.contains('cancelled'), isTrue);
+  });
 }
 
 Future<void> pumpRuntime() async {
@@ -499,5 +562,44 @@ final class FakeTimerHandle implements RuntimeTimerHandle {
     if (!_active) return;
     _active = false;
     callback();
+  }
+}
+
+final class FakeNotificationPort implements SyncNotificationPort {
+  final List<String> events = <String>[];
+
+  @override
+  Future<void> onSyncStarted({required String title, required String message}) async {
+    events.add('started');
+  }
+
+  @override
+  Future<void> onSyncProgress({
+    required String title,
+    required String message,
+    int? progress,
+    int? max,
+    bool indeterminate = false,
+  }) async {
+    events.add('progress:$message');
+  }
+
+  @override
+  Future<void> onSyncFinished({
+    required String title,
+    required String message,
+    required bool success,
+  }) async {
+    events.add('finished:$success');
+  }
+
+  @override
+  Future<void> onSyncCancelled() async {
+    events.add('cancelled');
+  }
+
+  @override
+  Future<void> requestPermission() async {
+    events.add('permission');
   }
 }

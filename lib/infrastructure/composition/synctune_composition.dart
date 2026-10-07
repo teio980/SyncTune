@@ -30,6 +30,7 @@ import '../platform/broker_credentials.dart';
 import '../platform/broker_local_object_store.dart';
 import '../platform/broker_music_scanner.dart';
 import '../platform/broker_root_revoker.dart';
+import '../platform/sync_notification_port.dart';
 import '../runtime/foreground_sync_runtime.dart';
 import '../runtime/sync_failure_message.dart';
 
@@ -1567,6 +1568,8 @@ final class SyncTuneComposition {
     BrokerMethodChannel? channel,
     WebDavSettingsPort? webDavSettingsPort,
     CompositionRuntimeEvidenceGate? runtimeEvidenceGate,
+    SyncNotificationPort? notificationPort,
+    bool allowBackgroundExecution = true,
   }) async {
     final brokerChannel = channel ?? const FlutterBrokerMethodChannel();
     String? privatePath;
@@ -1686,7 +1689,17 @@ final class SyncTuneComposition {
             'Sync service initialization failed. Sync remains disabled.';
       }
     }
-    final runtime = ForegroundSyncRuntime(targetPort: targets, runner: runner);
+    final effectiveNotificationPort = notificationPort ??
+        PlatformSyncNotificationPort(
+          channel: brokerChannel,
+          isAndroid: Platform.isAndroid,
+        );
+    final runtime = ForegroundSyncRuntime(
+      targetPort: targets,
+      runner: runner,
+      notificationPort: effectiveNotificationPort,
+      allowBackgroundExecution: allowBackgroundExecution,
+    );
     MusicDeletionPort? deletionPort;
     if (database != null && runner.services != null) {
       deletionPort = SyncTuneMusicDeletionService(
@@ -1723,6 +1736,9 @@ final class SyncTuneComposition {
       composition.lifecycleListener = null;
     }
     runtime.start();
+    if (Platform.isAndroid) {
+      unawaited(effectiveNotificationPort.requestPermission());
+    }
     return composition;
   }
 
