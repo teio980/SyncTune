@@ -1,85 +1,295 @@
-# SyncTune 计划符合性审查（最终复核）
+# SyncTune Plan Conformance Audit (Final Review)
 
-日期：2026-10-07
+Date: 2026-10-07
 
-本轮审查覆盖 `lib/app/`、`lib/infrastructure/composition/`、
-`lib/infrastructure/runtime/`、`lib/main.dart` 及其正式测试。app/composition
-修复由本轮负责；core/data/platform 的最终测试和构建证据由 root 线程独立提供，
-本轮没有修改这些目录。审查只做文件和测试验证，没有启动应用、模拟器或设备，
-也没有进行 ADB、安装运行、证书、系统修改或外部消息发送。
+This review covered `lib/app/`, `lib/infrastructure/composition/`,
+`lib/infrastructure/runtime/`, `lib/main.dart`, and their formal tests. This
+review handled app/composition and runtime-evidence fixes; the root chat independently supplied
+the final core/data/platform test and build evidence. Verification was limited
+to files, tests, and local build/package checks: no current MSIX was installed
+or launched, and no certificate import, system trust change, or external
+message was performed.
 
-## 已符合或已有实现证据
+## Requirements Met or Supported by Implementation Evidence
 
-- 应用层按 shell、音乐、同步、设置和 ViewModel 拆分，Material 3 主题使用
-  `#4F46E5` seed，并提供 light/dark/system（默认 system）。
-- 统一 spacing、圆角和最小交互尺寸 token 已集中定义；主题现在显式为
-  FilledButton、OutlinedButton、TextButton 和 IconButton 提供 48px 命中区。
-  正式 widget 回归覆盖 Windows 与 Android target platform，并覆盖 200% 文本
-  和 320/599/600/999/1000px 布局。
-- 生产组合绑定真实 Drift 数据库、catalog UUID、favorites Lamport/device 状态、
-  WebDAV 客户端租约、凭据 broker、PlanStore、JournalStore 和 baseline。
-- WebDAV 密码只写入平台凭据 broker；数据库只保存非 secret 字段、版本化
-  credential pointer 和 epoch。保存失败保留旧 pointer/secret。
-- slow `load()` 在较新的 save 后不会回写旧 namespace/credential epoch；显式空
-  pointer 不会再回退读取 legacy secret。正式 composition tests 覆盖这两项。
-- 配置 client 在显式清空凭据后 fail-closed；缺失 pointer 的 legacy 记录仍能恢复。
-  queued save 中每次实际 DB commit 都会发布对应 namespace/credential epoch，后续
-  保存失败不会隐藏已经 durable 的配置。composition remote wrapper 透传
-  `RemotePlanRecovery`，在 recovery await 返回前后都检查 root、generation、namespace
-  和 credential epoch；delayed remote request 中途切换这三类 target 的正式回归均
-  拒绝 stale recovery。
-- credential cleanup 失败不会回滚已提交的 DB pointer，并通过 settings warning
-  port 对用户显示“当前设置仍已生效”的清理警告。
-- root、config epoch 和 credential epoch 会参与 runtime target identity；变化会
-  取消旧运行。runtime 支持 startup、resume、manual、retry 和前台 15 分钟调度，
-  手动请求合并且不会重叠，dispose 会等待 in-flight run/check 收尾。
-- 初始化错误现在由 composition 传入 shell，在界面顶部可见；这避免数据库或同步
-  服务初始化失败时只留下静默的 disabled state。
-- recovery helper、favorite-stall 路径和 WebDAV formal recovery 已由 core/data
-  方向完成；正式 `test/webdav_recovery_test.dart` 的 13 个故障恢复 cases 通过。
+- The app layer is split into shell, music, sync, settings, and ViewModel
+  modules. The Material 3 theme uses the `#4F46E5` seed and supports light,
+  dark, and system modes, with system as the default.
+- Shared spacing, corner radius, and minimum interaction size tokens are
+  centralized. The theme explicitly provides 48px hit targets for FilledButton,
+  OutlinedButton, TextButton, and IconButton. Formal widget regressions cover
+  Windows and Android target platforms, 200% text scaling, and layouts at
+  320/599/600/999/1000px.
+- Production composition binds a real Drift database, catalog UUIDs,
+  favorites Lamport/device state, WebDAV client leases, a credential broker,
+  PlanStore, JournalStore, and the baseline.
+- WebDAV passwords are written only to the platform credential broker. The
+  database stores nonsecret fields, a versioned credential pointer, and epochs.
+  A failed save preserves the previous pointer and secret.
+- A slow `load()` cannot overwrite a newer save with an old namespace or
+  credential epoch. An explicitly empty pointer no longer falls back to a
+  legacy secret. Formal composition tests cover both cases.
+- The configured client fails closed after credentials are explicitly cleared;
+  legacy records with a missing pointer can still recover. Each actual database
+  commit in a queued save publishes its corresponding namespace/credential
+  epoch. A later failed save cannot hide an already durable configuration.
+  The composition remote wrapper forwards `RemotePlanRecovery`, checking root,
+  generation, namespace, and credential epoch both before and after recovery
+  awaits. Formal regressions reject stale recovery when those three target
+  categories change during a delayed remote request.
+- Credential cleanup failure does not roll back a committed database pointer.
+  The settings warning port displays a cleanup warning explaining that the
+  current settings remain active.
+- Root, configuration epoch, and credential epoch participate in runtime target
+  identity. Changes cancel the previous run. The runtime supports startup,
+  resume, manual, retry, and foreground scheduling every 15 minutes. Manual
+  requests are combined without overlapping runs, and disposal waits for
+  in-flight runs and checks to finish.
+- Composition passes initialization errors to the shell, which displays them
+  at the top of the interface. Database or sync service initialization failures
+  therefore produce a visible explanation for the disabled state.
+- The core/data work completed the recovery helper, favorite-stall path, and
+  formal WebDAV recovery. All 13 fault recovery cases in
+  `test/webdav_recovery_test.dart` passed.
 
-## 当前仍不符合或未完成
+## Outstanding Requirements
 
-- 生产同步 gate 默认保持关闭，只有真实 runtime evidence、native capability 和
-  WebDAV PROPFIND/探测全部通过才会开放；本轮没有用注入的 fake gate 解锁生产路径。
-- Android 的 conditional create/replace/delete 仍标记为 unsupported SAF provider；
-  Windows 的 conditional replace/delete 仍标记为 unsupported AppContainer provider。
-  因此不能以 capability 字符串或单次 PROPFIND 结果伪造可用。
-- Windows AppContainer 的真实 runtime evidence 尚未完成验证；本轮没有启动设备或
-  应用进行复验。Android APK、Windows Release 和 unsigned MSIX 仅完成构建/打包，
-  没有安装或运行，因此不能视为平台 runtime 验收结果。
-- 外部普通 WebDAV 文件的 adoption/reconcile 用户流程尚未完成；当前适配器要求
-  SyncTune identity metadata，未授权的普通文件不会被后台扫描隐式采用。
+- The production sync gate remains closed by default. It opens only after real
+  runtime evidence, native capabilities, and WebDAV PROPFIND/probes all pass.
+  This review did not unlock production using an injected fake gate.
+- The production composition now injects `PersistedRuntimeEvidenceGate` by
+  default. It reads same-package evidence, binds folder marker/token/generation
+  to the active root, checks the live `restoreFolder` and `brokerCapabilities`
+  responses, and rejects a changed root during asynchronous verification. The
+  startup probe runs automatically with a single-flight guard; its evidence
+  may be reused across launches for the same root after a restart has already
+  been proven. This remains a local evidence gate and does not evaluate remote
+  WebDAV compatibility by itself.
+- Android conditional create/replace/delete still report an unsupported SAF
+  provider. Windows conditional replace/delete still report an unsupported
+  AppContainer provider. Capability strings or a single PROPFIND result cannot
+  establish availability.
+- Real Windows AppContainer runtime evidence remains unverified. This review
+  did not launch an app or device for another check. The Android APK, Windows
+  Release executable, and unsigned MSIX were only built or packaged, without
+  installation or execution, so they do not establish platform runtime
+  acceptance.
+- This round rebuilt the Windows executable and created a signed MSIX with the
+  existing CurrentUser development certificate (thumbprint
+  `084197F208644E47E54CC8F77A5B0D5D6382F766`; SHA-256
+  `3AC2EEA83AB798345C452159D99DC3311ADB8650A88DD5F88232E7095C5C002A`.
+  Signature verification passed;
+  the package was not installed or launched, and no certificate or system
+  trust store was changed. `tools/verify-runtime-evidence.ps1` was run against
+  the installed package's LocalState and returned `blocked` because no startup
+  evidence files exist. The script reports local evidence separately and keeps
+  remote compatibility and end-to-end synchronization unverified.
+- The user workflow for adopting or reconciling ordinary external WebDAV files
+  remains incomplete. The current adapter requires SyncTune identity metadata;
+  background scans do not implicitly adopt unauthorized ordinary files.
 
-## 本轮验证
+## Verification During This Review
 
-最终监督日志显示：`build/review/resumed-final-flutter-analysis.log` 为
-`No issues found!`；`build/review/resumed-final-flutter-tests.log` 为
-`+112 All tests passed!`；`build/review/resumed-final-core-analysis.log` 无问题，
-`build/review/resumed-final-core-tests.log` 为 `+32 All tests passed!`。当前
-`test/webdav_recovery_test.dart` 独立正式回归为 `+13 All tests passed!`；本轮
-composition/runtime/settings/UI 与 race/atomicity targeted 集合（含新增
-post-await guard cases）为 `+39 All tests passed!`，desktop Windows 48px audit
-为 `+1`。
+The historical final supervision logs recorded `No issues found!` in
+`build/review/resumed-final-flutter-analysis.log`, `+112 All tests passed!` in
+`build/review/resumed-final-flutter-tests.log`, no issues in
+`build/review/resumed-final-core-analysis.log`, and `+32 All tests passed!` in
+`build/review/resumed-final-core-tests.log`. The independent formal regression
+in `test/webdav_recovery_test.dart` recorded `+13 All tests passed!`. The targeted
+composition/runtime/settings/UI and race/atomicity group, including the new
+post-await guard cases, recorded `+39 All tests passed!`. The desktop Windows
+48px audit recorded `+1`.
 
-平台构建日志也均以 exit 0 完成：
-`build/review/resumed-final-android-build.log` 生成 56.4MB Release APK；
-`build/review/resumed-final-windows-build.log` 生成 Windows Release executable；
-`build/review/resumed-final-msix-build.log` 成功生成 unsigned MSIX。三者都只
-证明 build/package，没有安装或运行证据。本轮没有启动应用、模拟器或设备，cloud
-CI 尚未运行。
+The current full Flutter run supersedes the historical `+112` count with
+`+148 All tests passed`. The independent current supervision run recorded
+clean analysis and 29 targeted tests in
+`build/review/supervisor-runtime-gate-analysis.log` and
+`build/review/supervisor-runtime-gate-tests.log`.
 
-这些结果证明当前源码的静态分析、正式 Flutter/core tests、恢复回归和构建链路
-通过，但不表示完整计划已经符合：生产 gate/CAS 条件仍关闭，平台真实 runtime
-evidence、普通 WebDAV adoption/reconcile UI、Git history cleanup 和 cloud CI 仍
-待完成。
+Platform build logs also completed with exit code 0:
 
-```text
-flutter test test/composition_test.dart \
-  test/foreground_sync_runtime_test.dart \
-  test/settings_view_model_test.dart \
-  test/responsive_ui_test.dart \
-  build/review/settings_load_race_audit_test.dart \
-  build/review/settings_atomicity_review_test.dart
-```
+- `build/review/resumed-final-android-build.log` produced a 56.4MB Release APK.
+- `build/review/resumed-final-windows-build.log` produced the Windows Release
+  executable.
+- `build/review/resumed-final-msix-build.log` produced an unsigned MSIX.
 
+These three results establish build/package success only. There is no
+installation or execution evidence from this review. No app, emulator, or
+device was launched, and cloud CI has not run.
+
+The current validation round also ran `flutter test --no-pub` with `+148 All
+tests passed`, `flutter build windows --release --no-pub` with a successful
+Windows Release build in 136 seconds, and (from `android`)
+`gradlew.bat app:compileReleaseKotlin --offline -x
+app:compileFlutterBuildRelease` with `BUILD SUCCESSFUL` in 46 seconds. The
+signed MSIX was verified with `Get-AuthenticodeSignature` as `Valid`; its
+certificate subject is `CN=SyncTune Development`, thumbprint
+`084197F208644E47E54CC8F77A5B0D5D6382F766`, and SHA-256 is
+`3AC2EEA83AB798345C452159D99DC3311ADB8650A88DD5F88232E7095C5C002A`.
+The signing command was
+`tools/package-msix.ps1 -Sign -CertificateThumbprint 084197F208644E47E54CC8F77A5B0D5D6382F766`.
+The supervisor's independent analysis and 29-test run are recorded in
+`build/review/supervisor-runtime-gate-analysis.log` and
+`build/review/supervisor-runtime-gate-tests.log`; `git diff --check` passed.
+These current-round results were executed in the task and are recorded here;
+no separate full-suite log was manufactured.
+
+The Android Debug build failure reported on 2026-10-07 was reproduced with the
+workspace Flutter SDK. Its first errors were hosted package reads reported as
+`../../../AppData/Local/Pub/Cache/...`; the package files existed and a direct
+Dart package-resolution smoke compile passed. `flutter pub get --offline`
+left both `pubspec.lock` and `.dart_tool/package_config.json` unchanged, and
+the workspace debug kernel cache was isolated without changing the result.
+The later `Matrix4`, `Vector3`, and `clock` diagnostics were therefore
+downstream symptoms of the Gradle Flutter compile process. The current stale
+Gradle daemon was stopped with `android\\gradlew.bat --stop` (one daemon),
+after which the ordinary command
+`C:\\Users\\Owner\\Documents\\teiocode\\flutter-sdk\\bin\\flutter.bat
+build apk --debug --no-pub` succeeded in 56.1 seconds. A direct full
+`android\\gradlew.bat :app:assembleDebug --offline --console=plain
+--no-daemon` run succeeded in 1m37s; `:app:compileFlutterBuildDebug` ran and
+the final result was `BUILD SUCCESSFUL` with 55 tasks (23 executed, 32
+up-to-date). These results identify stale Gradle process state as the observed
+trigger, without proving the exact OS-level cause. Evidence is retained in
+`build/review/android-debug-repro.log`,
+`build/review/android-gradle-debug-no-daemon.log`,
+`build/review/android-debug-after-daemon-stop.log`, and
+`build/review/android-gradle-stop.log`.
+
+The resulting APK is `build/app/outputs/flutter-apk/app-debug.apk`, SHA-256
+`9CCBB85945CED9E261A2D898700A51C3B5045CDAA969064BD03E2BF0F251C108`.
+`aapt2 dump badging` verified package `com.example.synctune`, version `1.0.0`,
+and `minSdkVersion:24`; `apksigner verify` passed with v2 signing. This is a
+build and package result only: the APK was not installed or launched, and it
+does not establish Android SAF runtime behavior or dual-platform sync delivery.
+
+At the earlier pre-install snapshot, `SyncTune.Probe` 1.0.0.9 was not present
+in `Get-AppxPackage`; only the older `SyncTune.PlatformProbe` 1.0.0.8 was
+installed, and its legacy evidence file was not accepted. That snapshot's
+Windows rows were pending. Conditional replace/delete CAS, remote WebDAV
+compatibility, end-to-end synchronization, and full dual-platform delivery
+remain incomplete. No destructive project cleanup or Git history rewrite was
+performed.
+
+These results establish passing static analysis, formal Flutter/core tests,
+recovery regressions, and the build pipeline for the reviewed source. Full
+plan conformance remains incomplete: production gate/CAS conditions remain
+closed, and real platform runtime evidence, the ordinary WebDAV
+adoption/reconciliation UI, Git history cleanup, and cloud CI remain pending.
+
+## Current Windows gate revalidation (2026-10-07)
+
+The pending-install statements above are historical. The exact package tested
+in this revalidation was `SyncTune.Probe_1.0.0.17_x64__c6rm0w713zsqa`, installed
+with status `Ok`. Its MSIX Authenticode signature was `Valid` for
+`CN=SyncTune Development` (thumbprint
+`084197F208644E47E54CC8F77A5B0D5D6382F766`), with SHA-256
+`10A20691822AE413373E4B0AA1C8A6017C538F417E1DE24BD8F4C94134CA9569`.
+
+Two standard AppsFolder launches of that PFN produced complete private
+LocalState records for PIDs `22304` and `20672`. Both reported
+`process.appContainer=true`, broker capability status `ok`, WinRT HTTPS status
+`passed` with HTTP 200, transport `winrt_http_client`, and PasswordVault
+status `ok`. The restart credential check was `ok` on both records. Both
+reported `folderRestore.status=none`, because no FolderPicker/FutureAccessList
+marker was created. Both reported SQLite `failed` with the native asset
+resolution error for `sqlite3_initialize`; the package contains the DLL and
+native-assets manifest, so this remains a runtime loader failure rather than
+a missing package payload. No new Event 1000 was observed during the .17
+observation window.
+
+The .15 filtered crash stack was symbolized with the matching Flutter engine
+PDB as `dart::bin::ClientSocket::ConnectComplete+0x38` at
+`eventhandler_win.cc:947`, through the Windows socket completion path. The
+probe therefore records the Windows capability result as a WinRT diagnostic
+transport. Android keeps its Dart HTTP branch with bounded connection,
+response, and drain waits. This evidence does not validate production Dio,
+WebDAV conditional requests, or end-to-end synchronization.
+
+The production gate remains closed: SQLite native asset loading is failed,
+the single-root FolderPicker/FutureAccessList recovery evidence is absent,
+and local conditional replace/delete CAS remains unsupported. No further
+synchronization implementation was advanced from this blocked prerequisite.
+The relevant build and package transcripts are
+`build/gate/winrt-https-stable-windows-build.log` and
+`build/gate/winrt-https-stable-package.log`; the two private evidence records
+are `synctune-probe-results-22304.json` and
+`synctune-probe-results-20672.json` under the installed package LocalState.
+
+## Final Windows preload revalidation (2026-10-07)
+
+The package-local SQLite preload is restricted to packaged processes. It uses
+`LoadPackagedLibrary(L"sqlite3.dll", 0)`, verifies `sqlite3_initialize`, and
+keeps the module resident without using the absolute build-machine path from
+`native_assets.json` or modifying the SDK. Build and package transcripts are
+`build/gate/sqlite-preload-winrt-final-build-v2.log` and
+`build/gate/sqlite-preload-winrt-final-package.log`.
+
+Installed package `SyncTune.Probe_1.0.0.20_x64__c6rm0w713zsqa` was `Ok`.
+PID `5344` produced a complete record with AppContainer `true`, SQLite
+`passed`/`restartCheck=true`, WinRT HTTPS HTTP 200 with
+`transport=winrt_http_client` and `timedOut=false`, and PasswordVault
+`status=ok`/restart `ok`. `folderRestore.status=none`; no picker marker was
+created. Broker conditional replace/delete remained
+`unsupported_appcontainer_provider`.
+
+The transport guard rejects this WinRT-only result for production because the
+current Dio WebDAV path is `dart_io_http_client`. The Windows-only validator
+also intentionally rejects Android's `appContainer=false` process shape;
+Android needs its own SAF token/generation/PID evidence path before a
+dual-platform runtime claim can be made. Production Dio/WebDAV behavior,
+FolderPicker/FutureAccessList recovery, CAS, and end-to-end synchronization
+remain unverified, so the production gate is still blocked.
+
+## Windows production transport delivery (2026-10-07)
+
+The source now uses `WindowsWinRtHttpAdapter` for Windows production Dio and
+for the settings connection check; startup evidence uses the distinct
+`dio_winrt_http` transport value. Android retains `dart_io_http_client`.
+The adapter passes arbitrary WebDAV methods and headers, preserves Dio's
+redirect policy, rejects HTTP or cross-origin redirects, stages large request
+bodies through the authorized root's `.synctune-local` broker area, hashes the
+complete staged body, and reads responses in bounded 64 KiB chunks. Cancellation
+is checked during source iteration, broker staging, native open, and response
+reads; failed staging is cleaned up. Small rootless connection checks use a
+private temporary file.
+
+After the targeted adapter/composition tests passed `+30`, the final command
+`flutter build windows --release --no-pub` produced the Release executable.
+`tools/package-msix.ps1 -Sign -CertificateThumbprint
+084197F208644E47E54CC8F77A5B0D5D6382F766` produced and signed
+`build/msix/SyncTuneProbe.msix` with identity `SyncTune.Probe` 1.0.0.22.
+Authenticode verification was `Valid` for `CN=SyncTune Development`; the
+package SHA-256 is
+`5FF234ADC0FE2E287E4018FEDDDF5E7721E9767EB008E6EE5DEDAACD1B777888`.
+The package was not installed or launched in this round. These static and
+contract results do not establish remote WebDAV compatibility, local provider
+capabilities, or end-to-end synchronization.
+
+The local conditional-CAS gate remains a separate conservative project guard.
+`LocalCondition`/`LocalMatchSha256` express an expected-content precondition;
+they do not promise provider-level atomic compare-and-swap. The user-specified
+strong conditional requirement applies to remote WebDAV `ETag`/`If-Match`.
+The local commit path now verifies the expected hash, preserves the old
+version in `.synctune-local`, persists each stage, verifies after commit, and
+retains recoverable deletes/conflict copies. `_ProductionCapabilityCheck`
+checks the explicitly named recovery capabilities; it does not claim
+provider-level atomic CAS.
+
+## Formal local recovery implementation (2026-10-07)
+
+Formal startup no longer treats `PersistedRuntimeEvidenceGate` as a required Windows or Android sync dependency. The runtime checks the live root token and generation, database and credential services, complete scans, and real remote WebDAV compatibility. The diagnostic evidence remains available for platform audits only.
+
+`LocalPlanRecovery` runs before a recovered plan's local scan. It consumes the SQLite journal's root, relative path, old condition, staged key, new hash, length, and phase. Broker operations are idempotent: a matching published object is acknowledged, a keyed backup is restored or reused, and an unknown target or simultaneous backup/target is retained as a visible conflict and returns `NeedsRescan`. Android persists a keyed move marker before SAF move and Windows uses the same stable backup key. The implementation provides verified backup/recovery semantics, not generic provider atomic compare-and-swap.
+
+The final package build for this round is intentionally a static delivery; installation, GUI folder selection, and WebDAV end-to-end behavior remain for the user's functional test.
+
+## Final static delivery (2026-10-07)
+
+`dist/SyncTune-Android-1.0.0+2.apk` has SHA-256
+`D931DBE3A0EEE2BF2D21E0067F7013831FD77A56F49F029E629FACC5F198EF4E` and
+APK v2 verification passed. `dist/SyncTune-Windows-1.0.0.22.msix` has SHA-256
+`5FF234ADC0FE2E287E4018FEDDDF5E7721E9767EB008E6EE5DEDAACD1B777888` and
+Authenticode `Valid` for `CN=SyncTune Development`, thumbprint
+`084197F208644E47E54CC8F77A5B0D5D6382F766`. Both were built without
+installation, launch, GUI authorization, or WebDAV functional testing.

@@ -46,11 +46,22 @@ installed package or run the script with `-Sign -CertificateThumbprint
 <thumbprint> -Install` without `-Reinstall`; removing the package would erase
 its LocalState, FutureAccessList, and Credential Locker state.
 
-The installed package opens the normal Chinese SyncTune shell. Open `设置` →
-`打开平台诊断` to run the retained capability probe, then use its folder
+The installed package opens the English SyncTune shell. Open `Settings` →
+`Open platform diagnostics` to run the retained capability probe, then use its folder
 button to choose the dedicated empty test directory. The probe is a diagnostic
 route; the product synchronization action remains disabled until the rows
 below have been independently verified.
+
+The app also runs the non-interactive startup probe after launch and coalesces
+it with the diagnostics route. Once a marker has been created for the active
+root, later launches may reuse the same package-and-root evidence while the
+gate performs a live `restoreFolder` and `brokerCapabilities` check. Changing
+the root or generation requires a new marker. Run
+`tools/verify-runtime-evidence.ps1 -EvidenceDirectory <LocalState>` to audit
+the persisted rows. A successful result proves only local AppContainer,
+credential, private-storage, folder-recovery, and broker capability evidence;
+the script reports remote WebDAV compatibility and end-to-end synchronization
+as unverified.
 
 If the machine requires administrator approval for the local development
 publisher, inspect the public certificate first and then run the following
@@ -245,13 +256,16 @@ remain unsupported, so full synchronization stays disabled.
 | Check | Result | Evidence |
 | --- | --- | --- |
 | Native Windows runner compile | PASS | `MSBuild ... synctune.vcxproj /t:ClCompile`; `probe_channel.cpp` compiled with 0 warnings and 0 errors |
-| Flutter Windows release build | PASS | `flutter build windows --release --no-pub`; output `build/windows/x64/runner/Release/synctune.exe` |
-| Android native Kotlin compile | PASS | `gradlew app:compileReleaseKotlin --offline -x app:compileFlutterBuildRelease` |
+| Dart analysis | PASS | `dart analyze --fatal-infos`; `No issues found!` in the current validation round |
+| Flutter Windows release build | PASS | `flutter build windows --release --no-pub`; output `build/windows/x64/runner/Release/synctune.exe` in 136 seconds |
+| Flutter full test suite | PASS | `flutter test --no-pub`; `+148 All tests passed` in the current validation round |
+| Android native Kotlin compile | PASS | From `android`, `gradlew.bat app:compileReleaseKotlin --offline -x app:compileFlutterBuildRelease`; `BUILD SUCCESSFUL` in 46 seconds |
 | Android release APK build and emulator run | PASS | `flutter build apk --release --no-pub`; installed and exercised on the isolated Android API 36 AVD above |
 | Unsigned MSIX packaging | PASS | Default `tools/package-msix.ps1` created `build/msix/SyncTuneProbe.msix` with `MakeAppx`; no signing, certificate import, installation, or launch was performed in this headless check; transcript in `build/gate/package-msix.log` |
-| Package installation | PENDING ELEVATED TRUST | `Add-AppxPackage` returned `0x80073CF0` / `0x800B0109` because the development publisher certificate is not trusted by the machine package deployment service |
+| Signed MSIX packaging | PASS | `tools/package-msix.ps1 -Sign -CertificateThumbprint 084197F208644E47E54CC8F77A5B0D5D6382F766`; Authenticode verification passed for `CN=SyncTune Development`. SHA-256: `3AC2EEA83AB798345C452159D99DC3311ADB8650A88DD5F88232E7095C5C002A`. No certificate import or installation was performed by this audit. |
+| Current package installation | PENDING USER ADMIN ACTION | `SyncTune.Probe` 1.0.0.9 is not present in `Get-AppxPackage`; only the older `SyncTune.PlatformProbe` 1.0.0.8 package is installed. The old package's `synctune-probe-results.json` uses a previous schema and is not accepted as current evidence. |
 | Development registration fallback | PENDING DEVELOPER MODE | `tools/register-msix.ps1` returned `0x80073CFF`; full transcript in `build/gate/register-msix.log`; this machine has no developer license/sideloading policy |
-| AppContainer runtime rows | NOT YET OBSERVED | MSIX installation is blocked by the untrusted development publisher certificate; `processInfo`, FAL restart, credential restart, and capability evidence remain uncollected |
+| AppContainer runtime rows | NOT YET OBSERVED | The current package is not installed; `processInfo`, FAL restart, credential restart, and capability evidence for `SyncTune.Probe` remain uncollected. The old package's legacy evidence is rejected. |
 
 The remaining Windows runtime gate therefore requires an installed AppContainer run to
 capture `appContainer: true`, private database restart recovery, credential
@@ -260,6 +274,126 @@ exact `brokerCapabilities` response. Static builds and contract tests do not
 substitute for those OS permission rows.
 
 The package-install blocker is an environment trust prerequisite, not a
-runtime feasibility result. Do not mark this gate passed until the exact
-runtime rows above are captured from the installed AppContainer process.
+runtime feasibility result. The user has agreed to run the existing
+administrator helper; completion has not yet been observed. Do not mark this
+gate passed until the exact runtime rows above are captured from the installed
+AppContainer process. Conditional replace/delete CAS and remote WebDAV
+compatibility remain separate production conditions.
 
+## Latest installed-package revalidation (2026-10-07)
+
+The historical pending-install text above is superseded by the following
+real run. The user completed the existing administrator helper; the package was
+then updated per-user with the already trusted development certificate. The
+current installed identity is `SyncTune.Probe_1.0.0.17_x64__c6rm0w713zsqa`,
+version `1.0.0.17`, status `Ok`. The signed MSIX was verified as `Valid` for
+`CN=SyncTune Development`, thumbprint
+`084197F208644E47E54CC8F77A5B0D5D6382F766`, SHA-256
+`10A20691822AE413373E4B0AA1C8A6017C538F417E1DE24BD8F4C94134CA9569`.
+
+Two standard AppsFolder launches of that exact PFN completed the noninteractive
+probe and remained alive during the observation window:
+
+| Process | AppContainer | HTTPS probe | Credentials | SQLite | Folder recovery |
+| --- | --- | --- | --- | --- | --- |
+| PID 22304 | `true` | `passed`, HTTP 200, `winrt_http_client` | `ok`, restart `ok` | `failed` | `none` |
+| PID 20672 | `true` | `passed`, HTTP 200, `winrt_http_client` | `ok`, restart `ok` | `failed` | `none` |
+
+The JSON files are the package-private LocalState records
+`synctune-probe-results-22304.json` and
+`synctune-probe-results-20672.json`. The SQLite error is unchanged and
+actionable: Dart native assets cannot resolve
+`package:sqlite3/src/ffi/libsqlite3.g.dart`; there is no available native
+asset and the process lookup contains no `sqlite3_initialize` symbol. The
+package does contain `sqlite3.dll` and `NativeAssetsManifest.json`, so this is
+an AppContainer native-assets loading failure rather than a missing payload.
+
+The .10/.11 preload experiment made SQLite report `passed`; those versions
+also showed an Event 1000 crash (`ntdll.dll`, `0xc0000008`). Removing the
+preload in .12/.13 did not remove that crash, so the observations do not
+establish a preload cause. A filtered diagnostic stack from .15 symbolized
+with the matching Flutter engine PDB as
+`dart::bin::ClientSocket::ConnectComplete+0x38` at
+`eventhandler_win.cc:947`, through `WS2_32` and
+`flutter_windows.dll`. The probe therefore uses the Windows WinRT HTTP
+adapter for this AppContainer capability check; Android retains its Dart HTTP
+branch, and production Dio/WebDAV transport is a separate unverified
+condition. The .17 runs produced no new Event 1000 records.
+
+No FolderPicker/FutureAccessList marker has been created in this revalidation,
+so root-token recovery, cross-PID folder access, CAS, remote WebDAV
+compatibility, and end-to-end synchronization remain unverified. The
+production synchronization gate stays closed while SQLite is failed and the
+folder evidence is absent. The build and package transcripts are
+`build/gate/winrt-https-stable-windows-build.log` and
+`build/gate/winrt-https-stable-package.log`.
+
+## SQLite preload revalidation (2026-10-07, package 1.0.0.20)
+
+The package-local preload runs only after `GetCurrentPackagePath` confirms a
+packaged process. It calls `LoadPackagedLibrary(L"sqlite3.dll", 0)`, verifies
+the exported `sqlite3_initialize` symbol, and keeps the module loaded for the
+process lifetime. Unpackaged development keeps the normal Flutter loader
+path. The release build and signed package transcripts are
+`build/gate/sqlite-preload-winrt-final-build-v2.log` and
+`build/gate/sqlite-preload-winrt-final-package.log`.
+
+Installed package `SyncTune.Probe_1.0.0.20_x64__c6rm0w713zsqa` was `Ok`.
+PID `5344` produced `synctune-probe-results-5344.json` with AppContainer
+`true`, SQLite `passed`/`restartCheck=true`, WinRT HTTPS HTTP 200
+`passed`/`timedOut=false`, and PasswordVault `ok`/restart `ok`. Folder restore
+was `none`; no FolderPicker/FutureAccessList marker exists. Broker conditional
+replace/delete remained unsupported.
+
+This is the first packaged run in which SQLite passed. The production gate
+still requires `dart_io_http_client`, so the recorded WinRT diagnostic
+transport cannot satisfy production Dio. CAS, remote WebDAV compatibility,
+and end-to-end synchronization remain blocked. The prepared empty folder for
+the required manual picker step is
+`C:\Users\Owner\Documents\teiocode\SyncTune\build\gate\runtime-root-3505c583f40e4ebb8f995bbe6b95e430`.
+
+## Production transport source check (2026-10-07)
+
+The old `.20` runtime record above is historical WinRT-only evidence. Current
+Windows production Dio and the settings connection checker use
+`WindowsWinRtHttpAdapter`, and the startup diagnostic records
+`transport=dio_winrt_http`; Android continues to use its Dart HTTP adapter.
+The adapter carries WebDAV methods, headers, strong `If-Match` values, Dio
+redirect bounds, bounded upload/download chunks, cancellation, and authorized
+root `.synctune-local` staging with full SHA-256 verification. The native
+broker keeps a response reader for the whole response and rejects HTTP or
+cross-origin redirects.
+
+The targeted adapter/composition run passed `+30`. The final release package
+was built and signed without installation or launch:
+
+| Item | Result |
+| --- | --- |
+| Release build | `flutter build windows --release --no-pub` passed |
+| Package | `SyncTune.Probe` 1.0.0.22 at `build/msix/SyncTuneProbe.msix` |
+| Signature | `Valid`, `CN=SyncTune Development`, thumbprint `084197F208644E47E54CC8F77A5B0D5D6382F766` |
+| SHA-256 | `5FF234ADC0FE2E287E4018FEDDDF5E7721E9767EB008E6EE5DEDAACD1B777888` |
+
+This build result does not claim the AppContainer runtime gate or WebDAV
+end-to-end synchronization passed. The existing broker reports provider-level
+conditional replace/delete CAS as unsupported; that is a project capability
+boundary, not a claim that the user architecture requires a generic local
+provider CAS API. The implemented local path verifies the expected hash before
+mutation, preserves the old version in `.synctune-local`, persists and
+verifies each stage, and keeps deletes recoverable.
+
+
+## Current formal sync and recovery status (2026-10-07)
+
+The Windows-only persisted runtime evidence is an audit facility, not a formal Android/Windows synchronization prerequisite. The production runtime uses live root and generation validation, database and credential checks, complete scans, and a real WebDAV strong-ETag compatibility check. Android follows its SAF path and is not evaluated by Windows PFN/AppContainer rules.
+
+Both brokers now report explicitly named recovery capabilities: `verified_create_recovery`, `verified_backup_replace`, and `verified_backup_delete`. Before local scanning, `LocalPlanRecovery` replays unfinished SQLite journal phases. Each local replacement or deletion verifies the expected bytes, keeps a stable-key backup in `.synctune-local`, verifies the result, and preserves unknown or conflicting content for a rescan. Android uses a provider-visible keyed move marker before moving a SAF document; Windows uses a root-scoped keyed backup. These names intentionally do not claim atomic provider CAS.
+
+## Final static delivery (2026-10-07)
+
+The final signed package is `dist/SyncTune-Windows-1.0.0.22.msix`, SHA-256
+`5FF234ADC0FE2E287E4018FEDDDF5E7721E9767EB008E6EE5DEDAACD1B777888`,
+Authenticode `Valid`, signer `CN=SyncTune Development`, thumbprint
+`084197F208644E47E54CC8F77A5B0D5D6382F766`. It was built after the recovery
+changes and was not installed or launched. Android delivery is
+`dist/SyncTune-Android-1.0.0+2.apk`; user functional testing remains required.

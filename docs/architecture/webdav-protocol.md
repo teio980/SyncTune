@@ -1,11 +1,11 @@
 # WebDAV contract
 
-The adapter must support PROPFIND metadata with a strong ETag, streaming GET,
+The adapter must support PROPFIND file metadata with a strong ETag, streaming GET,
 conditional PUT and conditional DELETE. New objects use `If-None-Match: *`;
 updates use `If-Match`; 412 stops the current plan. The complete entry
 descriptor is stored at `.synctune/entries/<encoded-relative-path>.xml` and
 favorite metadata is stored at `.synctune/favorites/<encoded-relative-path>.xml`.
-Each object has its own strong ETag; a content update therefore carries both
+Each file object has its own strong ETag; a content update therefore carries both
 the content ETag and the entry-descriptor ETag, while a favorite update uses
 the favorite ETag. A missing or weak precondition is a compatibility error.
 
@@ -22,6 +22,17 @@ without SyncTune metadata are reported as incompatible until an explicit
 identity adoption flow is invoked. Adoption checks the existing resource
 size/strong ETag and writes the descriptor with create-only metadata CAS; it
 never happens as a side effect of a background scan.
+
+Collections may omit their ETag because traversal and MKCOL verification do not
+use directory CAS. Files and descriptors still require strong ETags. When a
+snapshot finds ordinary music without a descriptor, the Sync page offers
+**Import cloud music**. This explicit operation enumerates the selected cloud
+root, verifies each unpaired song with conditional streaming GET and SHA-256,
+and creates its identity descriptor with `If-None-Match: *`. It reads song
+content without replacing or deleting it. A retry preserves existing identities
+and continues with the remaining files; cancellation or changed bytes stops the
+import. After import, the ordinary coordinator performs synchronization and
+confirms the baseline through both post-scans.
 
 Before a managed file enters a remote snapshot, the adapter performs a
 conditional streaming GET against the PROPFIND strong ETag and computes the
