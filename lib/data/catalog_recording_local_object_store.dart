@@ -91,6 +91,7 @@ final class CatalogRecordingLocalObjectStore
   Future<void> delete(
     SyncPath path, {
     required LocalCondition condition,
+    SyncEntry? tombstone,
     String? operationId,
     CancellationToken token = const NeverCancelled(),
   }) async {
@@ -98,26 +99,40 @@ final class CatalogRecordingLocalObjectStore
     _ensurePinned(pinned, token);
     final previous = await catalog.loadCatalogEntry(pinned, path);
     _ensurePinned(pinned, token);
-    if (previous == null || previous.isDeleted) {
+    if ((previous == null || previous.isDeleted) && tombstone == null) {
       throw NeedsRescan('local delete has no catalog identity for $path');
     }
     await delegate.delete(
       path,
       condition: condition,
+      tombstone: tombstone,
       operationId: operationId,
       token: token,
     );
     _ensurePinned(pinned, token);
-    await catalog.rememberEntry(
-      pinned,
-      SyncEntry.tombstone(
-        id: previous.id,
-        path: path,
-        modifiedAtUtc: _nowUtc(),
-        revision: previous.revision + 1,
-        favorite: previous.favorite,
-      ),
-    );
+    final entryToSave = tombstone ??
+        SyncEntry.tombstone(
+          id: previous!.id,
+          path: path,
+          modifiedAtUtc: _nowUtc(),
+          revision: previous.revision + 1,
+          favorite: previous.favorite,
+        );
+    await catalog.rememberEntry(pinned, entryToSave);
+    _ensurePinned(pinned, token);
+  }
+
+  @override
+  Future<void> saveTombstone(
+    SyncPath path,
+    SyncEntry tombstone, {
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    final pinned = activeRoot();
+    _ensurePinned(pinned, token);
+    await delegate.saveTombstone(path, tombstone, token: token);
+    _ensurePinned(pinned, token);
+    await catalog.rememberEntry(pinned, tombstone);
     _ensurePinned(pinned, token);
   }
 

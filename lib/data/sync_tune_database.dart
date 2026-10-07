@@ -24,7 +24,7 @@ final class SyncTuneDatabase extends GeneratedDatabase
       StreamController<void>.broadcast();
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   // The SQL schema is intentionally kept in one migration until drift_dev is
   // introduced. Queries still go through Drift's opened executor and bindings.
@@ -162,6 +162,22 @@ final class SyncTuneDatabase extends GeneratedDatabase
           payload TEXT NOT NULL,
           updated_at INTEGER NOT NULL,
           UNIQUE(root_id, generation, remote_namespace, plan_id)
+        )
+      ''');
+      // ignore: deprecated_member_use
+      await m.issueCustomQuery('''
+        CREATE TABLE deletion_tasks (
+          operation_id TEXT PRIMARY KEY NOT NULL,
+          root_id TEXT NOT NULL,
+          generation TEXT NOT NULL,
+          remote_namespace TEXT NOT NULL,
+          entry_id TEXT NOT NULL,
+          relative_path TEXT NOT NULL,
+          expected_sha256 TEXT NOT NULL,
+          stage TEXT NOT NULL,
+          error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
         )
       ''');
     },
@@ -314,6 +330,24 @@ final class SyncTuneDatabase extends GeneratedDatabase
         await m.issueCustomQuery(
           'ALTER TABLE baseline_entries_new RENAME TO baseline_entries',
         );
+      }
+      if (from < 8) {
+        // ignore: deprecated_member_use
+        await m.issueCustomQuery('''
+          CREATE TABLE deletion_tasks (
+            operation_id TEXT PRIMARY KEY NOT NULL,
+            root_id TEXT NOT NULL,
+            generation TEXT NOT NULL,
+            remote_namespace TEXT NOT NULL,
+            entry_id TEXT NOT NULL,
+            relative_path TEXT NOT NULL,
+            expected_sha256 TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            error TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          )
+        ''');
       }
     },
   );
@@ -1028,6 +1062,145 @@ final class SyncTuneDatabase extends GeneratedDatabase
     );
   }
 
+  Future<void> saveDeletionTask(DeletionTaskRecord task) async {
+    await customInsert(
+      '''INSERT INTO deletion_tasks
+        (operation_id, root_id, generation, remote_namespace, entry_id,
+         relative_path, expected_sha256, stage, error, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(operation_id)
+        DO UPDATE SET stage = excluded.stage, error = excluded.error,
+          updated_at = excluded.updated_at''',
+      variables: [
+        Variable.withString(task.operationId),
+        Variable.withString(task.rootId),
+        Variable.withString(task.generation),
+        Variable.withString(task.remoteNamespace),
+        Variable.withString(task.entryId),
+        Variable.withString(task.relativePath),
+        Variable.withString(task.expectedSha256),
+        Variable.withString(task.stage),
+        if (task.error == null)
+          Variable<Object>(null)
+        else
+          Variable.withString(task.error!),
+        Variable.withInt(task.createdAt.toUtc().microsecondsSinceEpoch),
+        Variable.withInt(task.updatedAt.toUtc().microsecondsSinceEpoch),
+      ],
+    );
+  }
+
+  Future<void> updateDeletionTaskStage(
+    String operationId,
+    String stage, {
+    String? error,
+  }) async {
+    await customUpdate(
+      '''UPDATE deletion_tasks
+         SET stage = ?, error = ?, updated_at = ?
+         WHERE operation_id = ?''',
+      variables: [
+        Variable.withString(stage),
+        if (error == null)
+          Variable<Object>(null)
+        else
+          Variable.withString(error),
+        Variable.withInt(DateTime.now().toUtc().microsecondsSinceEpoch),
+        Variable.withString(operationId),
+      ],
+    );
+  }
+
+  Future<List<DeletionTaskRecord>> loadPendingDeletionTasks({
+    required String rootId,
+    required String generation,
+    required String remoteNamespace,
+  }) async {
+    final rows = await customSelect(
+      '''SELECT operation_id, root_id, generation, remote_namespace, entry_id,
+                relative_path, expected_sha256, stage, error, created_at, updated_at
+         FROM deletion_tasks
+         WHERE root_id = ? AND generation = ? AND remote_namespace = ?
+           AND stage != 'completed'
+         ORDER BY created_at ASC''',
+      variables: [
+        Variable.withString(rootId),
+        Variable.withString(generation),
+        Variable.withString(remoteNamespace),
+      ],
+    ).get();
+    return rows.map(_mapDeletionTaskRecord).toList();
+  }
+
+  Future<List<DeletionTaskRecord>> loadAllPendingDeletionTasks() async {
+    final rows = await customSelect(
+      '''SELECT operation_id, root_id, generation, remote_namespace, entry_id,
+                relative_path, expected_sha256, stage, error, created_at, updated_at
+         FROM deletion_tasks
+         WHERE stage != 'completed'
+         ORDER BY created_at ASC''',
+    ).get();
+    return rows.map(_mapDeletionTaskRecord).toList();
+  }
+
+  Future<void> markDeletionTasksCompleted({
+    required String rootId,
+    required String generation,
+    required String remoteNamespace,
+    Iterable<String>? relativePaths,
+  }) async {
+    if (relativePaths == null) {
+      await customUpdate(
+        '''UPDATE deletion_tasks
+           SET stage = 'completed', updated_at = ?
+           WHERE root_id = ? AND generation = ? AND remote_namespace = ?
+             AND stage != 'completed' ''',
+        variables: [
+          Variable.withInt(DateTime.now().toUtc().microsecondsSinceEpoch),
+          Variable.withString(rootId),
+          Variable.withString(generation),
+          Variable.withString(remoteNamespace),
+        ],
+      );
+    } else {
+      for (final path in relativePaths) {
+        await customUpdate(
+          '''UPDATE deletion_tasks
+             SET stage = 'completed', updated_at = ?
+             WHERE root_id = ? AND generation = ? AND remote_namespace = ?
+               AND relative_path = ? AND stage != 'completed' ''',
+          variables: [
+            Variable.withInt(DateTime.now().toUtc().microsecondsSinceEpoch),
+            Variable.withString(rootId),
+            Variable.withString(generation),
+            Variable.withString(remoteNamespace),
+            Variable.withString(path),
+          ],
+        );
+      }
+    }
+  }
+
+  DeletionTaskRecord _mapDeletionTaskRecord(QueryRow row) => DeletionTaskRecord(
+        operationId: row.read<String>('operation_id'),
+        rootId: row.read<String>('root_id'),
+        generation: row.read<String>('generation'),
+        remoteNamespace: row.read<String>('remote_namespace'),
+        entryId: row.read<String>('entry_id'),
+        relativePath: row.read<String>('relative_path'),
+        expectedSha256: row.read<String>('expected_sha256'),
+        stage: row.read<String>('stage'),
+        error: row.readNullable<String>('error'),
+        createdAt: DateTime.fromMicrosecondsSinceEpoch(
+          row.read<int>('created_at'),
+          isUtc: true,
+        ),
+        updatedAt: DateTime.fromMicrosecondsSinceEpoch(
+          row.read<int>('updated_at'),
+          isUtc: true,
+        ),
+      );
+
   @override
   Future<void> close() async {
     await _favoriteChanges.close();
@@ -1051,6 +1224,34 @@ final class FavoriteRow {
   final bool value;
   final int lamport;
   final String deviceId;
+}
+
+final class DeletionTaskRecord {
+  const DeletionTaskRecord({
+    required this.operationId,
+    required this.rootId,
+    required this.generation,
+    required this.remoteNamespace,
+    required this.entryId,
+    required this.relativePath,
+    required this.expectedSha256,
+    required this.stage,
+    this.error,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final String operationId;
+  final String rootId;
+  final String generation;
+  final String remoteNamespace;
+  final String entryId;
+  final String relativePath;
+  final String expectedSha256;
+  final String stage;
+  final String? error;
+  final DateTime createdAt;
+  final DateTime updatedAt;
 }
 
 SyncTuneDatabase openSyncTuneDatabase(String privatePath) {

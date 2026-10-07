@@ -253,6 +253,32 @@ final class ForegroundSyncRuntime
   @override
   Stream<ForegroundRuntimeSnapshot> get snapshots => _updates.stream;
 
+  bool get isBusy => _activeRun != null;
+
+  /// Acquires the runtime's single execution slot for an exclusive task such
+  /// as a local file deletion, preventing concurrent sync runs.
+  Future<T> runExclusive<T>(Future<T> Function() action) async {
+    if (_disposed) throw const SyncCancelled();
+    if (_activeRun != null) {
+      throw const SyncRuntimeNotReady('Sync is running. Please wait.');
+    }
+    _timer?.cancel();
+    _timer = null;
+    final completer = Completer<T>();
+    final run = completer.future;
+    _activeRun = run;
+    try {
+      final result = await action();
+      completer.complete(result);
+      return result;
+    } catch (error, stack) {
+      completer.completeError(error, stack);
+      rethrow;
+    } finally {
+      _finishActiveRun(run);
+    }
+  }
+
   /// Begins foreground scheduling. The initial request only performs real
   /// I/O if the injected runner's compatibility check returns ready.
   void start() {

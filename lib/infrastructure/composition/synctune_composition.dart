@@ -12,12 +12,14 @@ import 'package:synctune_sync_core/synctune_sync_core.dart';
 
 import '../../app/design/theme_mode.dart';
 import '../../app/localization/language.dart';
+import '../../app/music/music_deletion.dart';
 import '../../app/music/music_scan.dart';
 import '../../app/music/music_scan_port.dart';
 import '../../app/settings/settings_view_model.dart';
 import '../../app/sync/sync_gate.dart';
 import '../../app/sync/sync_status_view_model.dart';
 import '../../data/broker_local_snapshot_provider.dart';
+import 'music_deletion_service.dart';
 import '../../data/catalog_recording_local_object_store.dart';
 import '../../data/sync_tune_database.dart';
 import '../../data/webdav_repository.dart';
@@ -157,21 +159,18 @@ final class CompositionConfirmedSyncRunner
     implements ConfirmedSyncRunner, ExistingRemoteMusicImporter {
   CompositionConfirmedSyncRunner({
     SyncCoordinator coordinator = const SyncCoordinator(),
-    CompositionSyncServices? services,
-  }) : _coordinator = coordinator, // ignore: prefer_initializing_formals
-       _services = services; // ignore: prefer_initializing_formals
+    this.services,
+  }) : _coordinator = coordinator;
 
   final SyncCoordinator _coordinator;
-  CompositionSyncServices? _services;
-
-  set services(CompositionSyncServices? value) => _services = value;
+  CompositionSyncServices? services;
 
   @override
   Future<void> importCloudMusic(
     SyncRuntimeTarget target, {
     required CancellationToken token,
   }) async {
-    final importer = _services?.remoteMusicImport;
+    final importer = services?.remoteMusicImport;
     if (importer == null) {
       throw const SyncRuntimeNotReady('Cloud music import is unavailable.');
     }
@@ -186,11 +185,11 @@ final class CompositionConfirmedSyncRunner
     CancellationToken token = const NeverCancelled(),
   }) async {
     token.throwIfCancelled();
-    final services = _services;
-    if (services == null) {
+    final currentServices = services;
+    if (currentServices == null) {
       return const SyncGateState.unavailable();
     }
-    final capabilityCheck = services.capabilityCheck;
+    final capabilityCheck = currentServices.capabilityCheck;
     if (capabilityCheck == null) {
       return const SyncGateState.unavailable();
     }
@@ -205,8 +204,8 @@ final class CompositionConfirmedSyncRunner
     required String runToken,
     CancellationToken token = const NeverCancelled(),
   }) async {
-    final services = _services;
-    if (services == null) {
+    final currentServices = services;
+    if (currentServices == null) {
       throw const SyncRuntimeNotReady('The sync service is not connected yet');
     }
     token.throwIfCancelled();
@@ -218,18 +217,25 @@ final class CompositionConfirmedSyncRunner
     final result = await _coordinator.run(
       root,
       planId: runToken,
-      localSnapshots: services.localSnapshots,
-      remoteSnapshots: services.remoteSnapshots,
-      baseline: services.baseline,
-      local: services.local,
-      remote: services.remote,
-      journal: services.journal,
-      plans: services.plans,
+      localSnapshots: currentServices.localSnapshots,
+      remoteSnapshots: currentServices.remoteSnapshots,
+      baseline: currentServices.baseline,
+      local: currentServices.local,
+      remote: currentServices.remote,
+      journal: currentServices.journal,
+      plans: currentServices.plans,
       token: token,
     );
     token.throwIfCancelled();
     // Keep the runtime's success contract explicit at this boundary too.
     result.requireConfirmed();
+    if (currentServices.baseline is SyncTuneDatabase) {
+      await (currentServices.baseline as SyncTuneDatabase).markDeletionTasksCompleted(
+        rootId: root.storageKey,
+        generation: root.generation,
+        remoteNamespace: root.remoteNamespace,
+      );
+    }
     return result;
   }
 }
@@ -691,17 +697,24 @@ final class CatalogEnrichingMusicScanner implements MusicScannerPort {
         continue;
       }
       final item = Map<Object?, Object?>.from(raw);
+      final path = item['relativePath']?.toString() ?? '';
       final existing = item['id']?.toString();
-      if (existing == null || existing.isEmpty) {
-        final path = item['relativePath']?.toString() ?? '';
-        try {
+      try {
+        final parsed = SyncPath.parse(path);
+        if (existing == null || existing.isEmpty) {
           item['id'] = await catalog.ensureCatalogEntryId(
             root,
-            SyncPath.parse(path),
+            parsed,
           );
-        } on FormatException {
-          // MusicScanController retains its normal malformed-item error.
         }
+        if (item['sha256'] == null) {
+          final entry = await catalog.loadCatalogEntry(root, parsed);
+          if (entry?.sha256 != null && !entry!.isDeleted) {
+            item['sha256'] = entry.sha256;
+          }
+        }
+      } on FormatException {
+        // MusicScanController retains its normal malformed-item error.
       }
       enriched.add(item);
     }
@@ -1067,6 +1080,22 @@ final class CompositionRemoteRepository
     (repository) => repository.delete(
       path,
       condition: condition,
+      tombstone: tombstone,
+      metadataCondition: metadataCondition,
+      token: token,
+    ),
+  );
+
+  @override
+  Future<void> putTombstone(
+    SyncPath path, {
+    required SyncEntry tombstone,
+    required RemoteCondition metadataCondition,
+    CancellationToken token = const NeverCancelled(),
+  }) => _with(
+    token,
+    (repository) => repository.putTombstone(
+      path,
       tombstone: tombstone,
       metadataCondition: metadataCondition,
       token: token,
@@ -1469,6 +1498,7 @@ final class SyncTuneComposition {
     required this.webDavSettingsPort,
     required this._webDavClient,
     required this.lifecycleListener,
+    this.deletionPort,
   });
 
   final BrokerMethodChannel channel;
@@ -1481,6 +1511,7 @@ final class SyncTuneComposition {
   final String? initializationError;
   final WebDavSettingsPort? webDavSettingsPort;
   final CompositionWebDavClientLifecycle? _webDavClient;
+  final MusicDeletionPort? deletionPort;
   AppLifecycleListener? lifecycleListener;
   int _rootRequest = 0;
   bool _disposed = false;
@@ -1525,6 +1556,8 @@ final class SyncTuneComposition {
           languagePreferencePortProvider.overrideWithValue(
             DatabaseLanguagePreferencePort(database!),
           ),
+        if (deletionPort != null)
+          musicDeletionPortProvider.overrideWithValue(deletionPort!),
       ],
       child: child,
     );
@@ -1654,6 +1687,16 @@ final class SyncTuneComposition {
       }
     }
     final runtime = ForegroundSyncRuntime(targetPort: targets, runner: runner);
+    MusicDeletionPort? deletionPort;
+    if (database != null && runner.services != null) {
+      deletionPort = SyncTuneMusicDeletionService(
+        database: database,
+        local: runner.services!.local,
+        targets: targets,
+        runtime: runtime,
+      );
+      unawaited(deletionPort.recoverTasks());
+    }
     final composition = SyncTuneComposition._(
       channel: brokerChannel,
       brokerRoot: brokerRoot,
@@ -1665,6 +1708,7 @@ final class SyncTuneComposition {
       initializationError: initializationError,
       webDavSettingsPort: configuredWebDav,
       webDavClient: configuredWebDavClient,
+      deletionPort: deletionPort,
       lifecycleListener: null,
     );
     // Composition tests and non-widget hosts may construct the bundle before
