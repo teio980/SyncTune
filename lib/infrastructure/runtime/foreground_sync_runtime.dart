@@ -266,6 +266,7 @@ final class ForegroundSyncRuntime
     _timer = null;
     final completer = Completer<T>();
     final run = completer.future;
+    run.ignore();
     _activeRun = run;
     try {
       final result = await action();

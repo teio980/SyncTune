@@ -160,7 +160,7 @@ final class CompositionConfirmedSyncRunner
   CompositionConfirmedSyncRunner({
     SyncCoordinator coordinator = const SyncCoordinator(),
     this.services,
-  }) : _coordinator = coordinator;
+  }) : _coordinator = coordinator; // ignore: prefer_initializing_formals
 
   final SyncCoordinator _coordinator;
   CompositionSyncServices? services;
