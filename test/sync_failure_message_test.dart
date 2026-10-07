@@ -48,6 +48,10 @@ void main() {
 
   test('HTTP status and transport failures keep private data out of copy', () {
     expect(
+      syncFailureMessage(WebDavHttpError(301, SyncPath.parse('song.mp3'))),
+      contains('redirected the request'),
+    );
+    expect(
       syncFailureMessage(WebDavHttpError(403, SyncPath.parse('song.mp3'))),
       contains('Access denied'),
     );

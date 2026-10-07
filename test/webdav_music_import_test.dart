@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:synctune/data/webdav_repository.dart';
@@ -14,16 +15,16 @@ const _hash =
 void main() {
   late _Dav adapter;
   late WebDavRemoteSnapshotProvider provider;
+  late WebDavRepository repository;
   setUp(() {
     adapter = _Dav();
     final dio = Dio()..httpClientAdapter = adapter;
     addTearDown(dio.close);
-    provider = WebDavRemoteSnapshotProvider(
-      repository: WebDavRepository(
-        dio: dio,
-        baseUri: Uri.parse('https://dav.test/dav/'),
-      ),
+    repository = WebDavRepository(
+      dio: dio,
+      baseUri: Uri.parse('https://dav.test/dav/'),
     );
+    provider = WebDavRemoteSnapshotProvider(repository: repository);
   });
 
   test('ordinary scan identifies unmanaged music without writing', () async {
@@ -36,6 +37,209 @@ void main() {
       isTrue,
     );
     expect(adapter.descriptors, isEmpty);
+  });
+
+  for (final mode in ['GET missing', 'PUT missing', 'all missing', 'weak']) {
+    test('import and repeated snapshot work with $mode ETags', () async {
+      adapter.omitGetEtags = mode == 'GET missing' || mode == 'all missing';
+      adapter.omitPutEtags = mode == 'PUT missing' || mode == 'all missing';
+      adapter.omitListingEtags = mode == 'all missing';
+      adapter.weakEtags = mode == 'weak';
+      await provider.importExistingMusic();
+      final snapshot = await provider.capture(_root);
+      expect(snapshot.complete, isTrue);
+      expect(snapshot.entries.values.single.entry.sha256, _hash);
+      final descriptors = Map<String, String>.from(adapter.descriptors);
+      await provider.importExistingMusic();
+      expect(adapter.descriptors, descriptors);
+      expect(
+        (await provider.capture(_root)).entries.values.single.entry.id,
+        snapshot.entries.values.single.entry.id,
+      );
+      expect(
+        adapter.requests.any(
+          (r) => '${r.headers['If-Match']}'.contains('synctune-sha256'),
+        ),
+        isFalse,
+      );
+    });
+  }
+
+  void omitEtags() {
+    adapter.omitGetEtags = true;
+    adapter.omitPutEtags = true;
+    adapter.omitListingEtags = true;
+  }
+
+  for (final direction in ['download', 'upload']) {
+    test(
+      'full coordinator $direction confirms sync without any ETags',
+      () async {
+        omitEtags();
+        final phone = _MemoryPhone();
+        if (direction == 'download') {
+          await provider.importExistingMusic();
+        } else {
+          adapter.songData = null;
+          final entry = SyncEntry.file(
+            id: 'phone-song',
+            path: SyncPath.parse('album/song.mp3'),
+            size: 3,
+            sha256: _hash,
+            modifiedAtUtc: DateTime.utc(2026, 10, 7),
+          );
+          phone.entries[entry.path] = entry;
+          phone.bytes[entry.path] = utf8.encode('abc');
+        }
+        Future<SyncRunResult> sync(String id) => const SyncCoordinator().run(
+          _root,
+          planId: id,
+          localSnapshots: phone,
+          remoteSnapshots: provider,
+          baseline: phone,
+          local: phone,
+          remote: repository,
+          journal: phone,
+        );
+        final first = await sync('first');
+        first.requireConfirmed();
+        expect(first.baselineConfirmed, isTrue);
+        expect(phone.bytes.values.single, utf8.encode('abc'));
+        expect(adapter.songData, 'abc');
+        adapter.requests.clear();
+        (await sync('second')).requireConfirmed();
+        expect(
+          adapter.requests.where((r) => ['PUT', 'DELETE'].contains(r.method)),
+          isEmpty,
+        );
+      },
+    );
+  }
+
+  test(
+    'no-ETag updates validate prior bytes and verify the uploaded result',
+    () async {
+      omitEtags();
+      await provider.importExistingMusic();
+      final previous = (await provider.capture(_root)).entries.values.single;
+      final next = SyncEntry.file(
+        id: previous.entry.id,
+        path: previous.entry.path,
+        size: 3,
+        modifiedAtUtc: previous.entry.modifiedAtUtc,
+        sha256: sha256.convert(utf8.encode('xyz')).toString(),
+        favorite: previous.entry.favorite,
+      );
+      adapter.requests.clear();
+      await repository.put(
+        next.path,
+        Stream.value(utf8.encode('xyz')),
+        entry: next,
+        condition: MatchEtag(previous.etag!),
+        metadataCondition: MatchEtag(previous.metadataEtag!),
+      );
+      expect(adapter.songData, 'xyz');
+      expect(
+        (await provider.capture(_root)).entries.values.single.entry.sha256,
+        next.sha256,
+      );
+      expect(adapter.requests.where((r) => r.method == 'PUT'), hasLength(2));
+      expect(
+        adapter.requests
+            .where((r) => r.method == 'PUT')
+            .every((r) => !r.headers.containsKey('If-Match')),
+        isTrue,
+      );
+    },
+  );
+
+  for (final changed in ['song', 'descriptor']) {
+    test(
+      'no-ETag $changed change stops upload before modifying the song',
+      () async {
+        omitEtags();
+        await provider.importExistingMusic();
+        final previous = (await provider.capture(_root)).entries.values.single;
+        if (changed == 'song') {
+          adapter.songData = 'xyz';
+        } else {
+          adapter.descriptors.updateAll((_, value) => '$value\n');
+        }
+        adapter.requests.clear();
+        await expectLater(
+          repository.put(
+            previous.entry.path,
+            Stream.value(utf8.encode('abc')),
+            entry: previous.entry,
+            condition: MatchEtag(previous.etag!),
+            metadataCondition: MatchEtag(previous.metadataEtag!),
+          ),
+          throwsA(isA<RemotePreconditionFailed>()),
+        );
+        expect(adapter.requests.where((r) => r.method == 'PUT'), isEmpty);
+      },
+    );
+  }
+
+  test(
+    'no-ETag deletion checks bytes and persists a readable tombstone',
+    () async {
+      omitEtags();
+      await provider.importExistingMusic();
+      final previous = (await provider.capture(_root)).entries.values.single;
+      await repository.delete(
+        previous.entry.path,
+        condition: MatchEtag(previous.etag!),
+        metadataCondition: MatchEtag(previous.metadataEtag!),
+        tombstone: SyncEntry.tombstone(
+          id: previous.entry.id,
+          path: previous.entry.path,
+          modifiedAtUtc: DateTime.utc(2026, 10, 7),
+        ),
+      );
+      expect(adapter.songData, isNull);
+      expect(
+        (await provider.capture(_root)).entries.values.single.entry.isDeleted,
+        isTrue,
+      );
+    },
+  );
+
+  test('no-ETag favorites can be created and updated', () async {
+    omitEtags();
+    await provider.importExistingMusic();
+    var song = (await provider.capture(_root)).entries.values.single;
+    await repository.updateFavorite(
+      song.entry.path,
+      const FavoriteStamp(value: true, lamport: 1, deviceId: 'phone'),
+      condition: const CreateOnly(),
+    );
+    song = (await provider.capture(_root)).entries.values.single;
+    expect(song.entry.favorite.value, isTrue);
+    await repository.updateFavorite(
+      song.entry.path,
+      const FavoriteStamp(value: false, lamport: 2, deviceId: 'phone'),
+      condition: MatchEtag(song.favoriteEtag!),
+    );
+    expect(
+      (await provider.capture(_root))
+          .entries
+          .values
+          .single
+          .entry
+          .favorite
+          .value,
+      isFalse,
+    );
+  });
+
+  test('missing PUT ETag does not hide a corrupt write', () async {
+    omitEtags();
+    adapter.corruptWrite = true;
+    await expectLater(
+      provider.importExistingMusic(),
+      throwsA(isA<RemoteFileVerificationFailed>()),
+    );
   });
 
   test(
@@ -193,7 +397,7 @@ void main() {
     expect(adapter.requests.where((r) => r.method == 'PUT'), hasLength(1));
   });
 
-  test('collections may omit ETag while files still require a strong ETag', () {
+  test('missing or weak ETags leave validation to file checksums', () {
     final resources = WebDavRepository.parsePropfind(
       _multistatus([_collection('/dav/album/')]),
       baseUri: Uri.parse('https://dav.test/dav/'),
@@ -201,12 +405,68 @@ void main() {
     expect(resources.single.isCollection, isTrue);
     expect(resources.single.etag, isEmpty);
     expect(
-      () => WebDavRepository.parsePropfind(
+      WebDavRepository.parsePropfind(
         _multistatus([_file('/dav/song.mp3', 3, 'W/"weak"')]),
         baseUri: Uri.parse('https://dav.test/dav/'),
-      ),
-      throwsA(isA<WebDavCompatibilityError>()),
+      ).single.etag,
+      isEmpty,
     );
+  });
+
+  test('repeated snapshot of unchanged files does not re-read song bytes', () async {
+    await provider.importExistingMusic();
+    final firstSnapshot = await provider.capture(_root);
+    expect(firstSnapshot.complete, isTrue);
+    final readsBefore = adapter.songReads;
+    final secondSnapshot = await provider.capture(_root);
+    expect(secondSnapshot.complete, isTrue);
+    expect(adapter.songReads, readsBefore);
+  });
+
+  test('external deletion of cloud file is captured as tombstone', () async {
+    await provider.importExistingMusic();
+    final snapshot = await provider.capture(_root);
+    expect(snapshot.entries.values.single.entry.isDeleted, isFalse);
+    adapter.songData = null;
+    final afterDelete = await provider.capture(_root);
+    expect(afterDelete.entries.values.single.entry.isDeleted, isTrue);
+  });
+
+  test('external modification of cloud file updates entry with new hash', () async {
+    await provider.importExistingMusic();
+    final original = await provider.capture(_root);
+    expect(original.entries.values.single.entry.sha256, _hash);
+    adapter.songData = 'modified content';
+    adapter.songEtag = '"modified"';
+    final modified = await provider.capture(_root);
+    expect(
+      modified.entries.values.single.entry.sha256,
+      sha256.convert(utf8.encode('modified content')).toString(),
+    );
+    expect(modified.entries.values.single.entry.size, 'modified content'.length);
+  });
+
+  test('uploading identical content skips audio PUT and updates descriptor', () async {
+    await provider.importExistingMusic();
+    final previous = (await provider.capture(_root)).entries.values.single;
+    final next = SyncEntry.file(
+      id: 'new-id-for-same-content',
+      path: previous.entry.path,
+      size: 3,
+      modifiedAtUtc: previous.entry.modifiedAtUtc,
+      sha256: _hash,
+      favorite: previous.entry.favorite,
+    );
+    adapter.requests.clear();
+    await repository.put(
+      next.path,
+      Stream.value(utf8.encode('abc')),
+      entry: next,
+      condition: MatchEtag(previous.etag!),
+      metadataCondition: MatchEtag(previous.metadataEtag!),
+    );
+    expect(adapter.requests.where((r) => r.method == 'PUT'), hasLength(1));
+    expect(adapter.descriptors.values.single, contains('new-id-for-same-content'));
   });
 }
 
@@ -223,12 +483,144 @@ String _file(String href, int length, String etag) => _response(href, '''
 String _multistatus(List<String> resources) =>
     '<D:multistatus xmlns:D="DAV:">${resources.join()}</D:multistatus>';
 
+final class _MemoryPhone
+    implements
+        LocalSnapshotProvider,
+        LocalObjectStore,
+        BaselineStore,
+        JournalStore {
+  final entries = <SyncPath, SyncEntry>{};
+  final bytes = <SyncPath, List<int>>{};
+  final staged = <String, List<int>>{};
+  final records = <JournalRecord>[];
+  SyncSnapshot? baseline;
+
+  @override
+  Future<SyncSnapshot> capture(
+    SyncRoot root, {
+    CancellationToken token = const NeverCancelled(),
+  }) async => SyncSnapshot(
+    deviceId: 'phone',
+    capturedAtUtc: DateTime.now().toUtc(),
+    entries: entries.values,
+    generation: root.generation,
+  );
+  @override
+  Future<Stream<List<int>>> read(
+    SyncPath path, {
+    CancellationToken token = const NeverCancelled(),
+  }) async => Stream.value(bytes[path]!);
+  @override
+  Future<StagedObject> stage(
+    SyncPath path,
+    Stream<List<int>> content, {
+    required String expectedSha256,
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    final data = await content.expand((c) => c).toList();
+    final hash = sha256.convert(data).toString();
+    if (hash != expectedSha256) {
+      throw const NeedsRescan('download checksum mismatch');
+    }
+    final key = '${staged.length}';
+    staged[key] = data;
+    return StagedObject(key: key, sha256: hash, length: data.length);
+  }
+
+  @override
+  Future<Stream<List<int>>> openStaged(
+    StagedObject object, {
+    CancellationToken token = const NeverCancelled(),
+  }) async => Stream.value(staged[object.key]!);
+  @override
+  Future<bool> verifyStaged(
+    StagedObject object, {
+    required String expectedSha256,
+    required int expectedLength,
+    CancellationToken token = const NeverCancelled(),
+  }) async =>
+      staged[object.key]?.length == expectedLength &&
+      sha256.convert(staged[object.key]!).toString() == expectedSha256;
+  @override
+  Future<void> commitStaged(
+    SyncPath path,
+    StagedObject object, {
+    required SyncEntry entry,
+    required LocalCondition condition,
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    if ((condition is LocalCreateOnly && bytes.containsKey(path)) ||
+        (condition is LocalMatchSha256 &&
+            entries[path]?.sha256 != condition.sha256)) {
+      throw const NeedsRescan('local file changed');
+    }
+    entries[path] = entry;
+    bytes[path] = staged[object.key]!;
+  }
+
+  @override
+  Future<void> delete(
+    SyncPath path, {
+    required LocalCondition condition,
+    String? operationId,
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    final entry = entries[path]!;
+    bytes.remove(path);
+    entries[path] = SyncEntry.tombstone(
+      id: entry.id,
+      path: path,
+      modifiedAtUtc: DateTime.now().toUtc(),
+      favorite: entry.favorite,
+    );
+  }
+
+  @override
+  Future<void> updateFavorite(
+    SyncPath path,
+    FavoriteStamp stamp, {
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    entries[path] = entries[path]!.copyWith(favorite: stamp);
+  }
+
+  @override
+  Future<SyncSnapshot?> load(SyncRoot root) async => baseline;
+  @override
+  Future<void> saveConfirmed(
+    SyncRoot root,
+    SyncSnapshot snapshot, {
+    required String planId,
+  }) async {
+    baseline = snapshot;
+  }
+
+  @override
+  Future<void> append(JournalRecord record) async {
+    records.add(record);
+  }
+
+  @override
+  Future<List<JournalRecord>> recordsFor(
+    String planId,
+    String generation,
+  ) async => records
+      .where((r) => r.planId == planId && r.generation == generation)
+      .toList();
+}
+
 final class _Dav implements HttpClientAdapter {
   final requests = <RequestOptions>[];
   final descriptors = <String, String>{};
   final directories = <String>{'/dav/', '/dav/album/'};
   String songEtag = '"song"';
   String songPath = '/dav/album/song.mp3';
+  String? songData = 'abc';
+  bool omitGetEtags = false;
+  bool omitPutEtags = false;
+  bool omitListingEtags = false;
+  bool weakEtags = false;
+  bool corruptWrite = false;
   bool changeOnRecheck = false;
   bool compressionVariant = false;
   bool truncateSong = false;
@@ -236,6 +628,17 @@ final class _Dav implements HttpClientAdapter {
   bool includeSecondSong = false;
   bool rejectSecondCreate = false;
   int songReads = 0;
+
+  Map<String, List<String>> _headers(String etag, bool omit) => omit
+      ? {}
+      : {
+          'etag': [weakEtags ? 'W/$etag' : etag],
+        };
+  String _listingTag(String etag) => omitListingEtags
+      ? ''
+      : weakEtags
+      ? 'W/$etag'
+      : etag;
 
   @override
   Future<ResponseBody> fetch(
@@ -253,55 +656,57 @@ final class _Dav implements HttpClientAdapter {
       );
     }
     if (options.method == 'PUT') {
-      expect(path, startsWith('/dav/.synctune/entries/'));
-      expect(options.headers['If-None-Match'], '*');
       final bytes = await body!.expand((c) => c).toList();
+      final isSong = path == songPath;
+      final existing = isSong ? songData : descriptors[path];
       if (rejectCreate ||
           (rejectSecondCreate && descriptors.isNotEmpty) ||
-          descriptors.containsKey(path)) {
+          (options.headers['If-None-Match'] == '*' && existing != null)) {
         return ResponseBody.fromString('', 412);
       }
-      descriptors[path] = utf8.decode(bytes);
+      final data = corruptWrite ? 'corrupted' : utf8.decode(bytes);
+      if (isSong) {
+        songData = data;
+      } else {
+        descriptors[path] = data;
+      }
       return ResponseBody.fromString(
         '',
         201,
-        headers: {
-          'etag': ['"meta"'],
-        },
+        headers: _headers(isSong ? songEtag : '"meta"', omitPutEtags),
       );
     }
     if (options.method == 'GET') {
       if (path == songPath || path == '/dav/album/second.mp3') {
         songReads++;
         return ResponseBody.fromString(
-          truncateSong ? 'ab' : 'abc',
-          200,
-          headers: {
-            'etag': [
-              compressionVariant &&
-                      options.headers['Accept-Encoding'] != 'identity'
-                  ? '"song-gzip"'
-                  : songEtag,
-            ],
-          },
+          truncateSong ? 'ab' : songData ?? '',
+          songData == null ? 404 : 200,
+          headers: _headers(
+            compressionVariant &&
+                    options.headers['Accept-Encoding'] != 'identity'
+                ? '"song-gzip"'
+                : songEtag,
+            omitGetEtags,
+          ),
         );
       }
       final descriptor = descriptors[path];
       return ResponseBody.fromString(
         descriptor ?? '',
         descriptor == null ? 404 : 200,
-        headers: descriptor == null
-            ? {}
-            : {
-                'etag': ['"meta"'],
-              },
+        headers: descriptor == null ? {} : _headers('"meta"', omitGetEtags),
       );
     }
     if (options.method == 'PROPFIND') {
       if (path == songPath || path == '/dav/album/second.mp3') {
         return ResponseBody.fromString(
           _multistatus([
-            _file(_href(path), 3, changeOnRecheck ? '"changed"' : '"song"'),
+            _file(
+              _href(path),
+              songData?.length ?? 0,
+              _listingTag(changeOnRecheck ? '"changed"' : '"song"'),
+            ),
           ]),
           207,
         );
@@ -321,20 +726,47 @@ final class _Dav implements HttpClientAdapter {
         }
       }
       if (directory == '/dav/album/') {
-        resources.add(_file(_href(songPath), 3, '"song"'));
+        if (songData != null) {
+          resources.add(
+            _file(_href(songPath), songData!.length, _listingTag('"song"')),
+          );
+        }
         if (includeSecondSong) {
-          resources.add(_file('/dav/album/second.mp3', 3, '"song"'));
+          resources.add(
+            _file('/dav/album/second.mp3', 3, _listingTag('"song"')),
+          );
         }
       }
       for (final entry in descriptors.entries) {
         if (entry.key.startsWith(directory) &&
             !entry.key.substring(directory.length).contains('/')) {
           resources.add(
-            _file(_href(entry.key), utf8.encode(entry.value).length, '"meta"'),
+            _file(
+              _href(entry.key),
+              utf8.encode(entry.value).length,
+              _listingTag('"meta"'),
+            ),
           );
         }
       }
       return ResponseBody.fromString(_multistatus(resources), 207);
+    }
+    if (options.method == 'HEAD') {
+      final isSong = path == songPath;
+      final data = isSong ? songData : descriptors[path];
+      return ResponseBody.fromString(
+        '',
+        data == null ? 404 : 200,
+        headers: _headers(isSong ? songEtag : '"meta"', omitGetEtags),
+      );
+    }
+    if (options.method == 'DELETE') {
+      if (path == songPath) {
+        songData = null;
+      } else {
+        descriptors.remove(path);
+      }
+      return ResponseBody.fromString('', 204);
     }
     throw StateError('Unexpected ${options.method} $path');
   }

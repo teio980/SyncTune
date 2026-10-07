@@ -66,8 +66,9 @@ final class WebDavReadResult {
   final String etag;
 }
 
-/// Dio/XML WebDAV transport. It never derives a write condition implicitly:
-/// callers must pass CreateOnly or a validated strong MatchEtag.
+/// Dio/XML WebDAV transport. Strong server validators use HTTP If-Match.
+/// Missing validators use content checksums and read-back verification; this
+/// fallback does not provide atomic server CAS.
 final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
   WebDavRepository({
     required Dio dio,
@@ -580,10 +581,11 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
       left.revision == right.revision &&
       left.modifiedAtUtc.toUtc() == right.modifiedAtUtc.toUtc();
 
-  Future<_EntryMetadata?> _readDescriptorForRecovery(
+  Future<_EntryMetadata?> _readEntryMetadata(
     SyncPath path, {
     required CancellationToken token,
     bool allowMissing = false,
+    bool includeFavorite = true,
   }) async {
     final documentResult = await readWithEtag(
       _entryMetadataPath(path),
@@ -593,9 +595,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     token.throwIfCancelled();
     if (documentResult == null) {
       if (allowMissing) return null;
-      throw WebDavCompatibilityError(
-        'Missing identity metadata for ${path.value}.',
-      );
+      throw RemoteMusicImportRequired(path);
     }
     final bytes = <int>[];
     await for (final chunk in documentResult.stream) {
@@ -678,8 +678,82 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
       ),
       _ => throw WebDavCompatibilityError('Unknown metadata kind $kind.'),
     };
-    return _EntryMetadata(entry: entry, etag: documentResult.etag);
+    final contentEtag = root.getAttribute('contentEtag');
+    final descriptorEtag = _validatorForBytes(documentResult.etag, bytes);
+
+    if (!includeFavorite) {
+      return _EntryMetadata(
+        entry: entry,
+        etag: descriptorEtag,
+        contentEtag: contentEtag,
+      );
+    }
+
+    final favoriteResult = await readWithEtag(
+      _favoriteMetadataPath(path),
+      token: token,
+      allowMissing: true,
+    );
+    if (favoriteResult == null) {
+      return _EntryMetadata(
+        entry: entry,
+        etag: descriptorEtag,
+        contentEtag: contentEtag,
+      );
+    }
+    final favoriteBytes = <int>[];
+    await for (final chunk in favoriteResult.stream) {
+      token.throwIfCancelled();
+      favoriteBytes.addAll(chunk);
+      if (favoriteBytes.length > 64 * 1024) {
+        throw const WebDavCompatibilityError(
+          'Favorite metadata document exceeded its size limit.',
+        );
+      }
+    }
+    final favoriteDocument = XmlDocument.parse(utf8.decode(favoriteBytes));
+    final favoriteRoot = favoriteDocument.rootElement;
+    if (favoriteRoot.name.local != 'favorite' ||
+        favoriteRoot.name.namespaceUri != 'urn:synctune:v1') {
+      throw const WebDavCompatibilityError(
+        'Invalid favorite metadata document.',
+      );
+    }
+    final fRaw = favoriteRoot.getAttribute('value');
+    final lRaw = favoriteRoot.getAttribute('lamport');
+    final device = favoriteRoot.getAttribute('device');
+    final lamport = lRaw == null ? null : int.tryParse(lRaw);
+    if ((fRaw != 'true' && fRaw != 'false') ||
+        lamport == null ||
+        lamport < 0 ||
+        device == null ||
+        (device.isEmpty && (lamport != 0 || fRaw != 'false'))) {
+      throw const WebDavCompatibilityError('Invalid favorite metadata values.');
+    }
+    return _EntryMetadata(
+      entry: entry.copyWith(
+        favorite: FavoriteStamp(
+          value: fRaw == 'true',
+          lamport: lamport,
+          deviceId: device,
+        ),
+      ),
+      etag: descriptorEtag,
+      contentEtag: contentEtag,
+      favoriteEtag: _validatorForBytes(favoriteResult.etag, favoriteBytes),
+    );
   }
+
+  Future<_EntryMetadata?> _readDescriptorForRecovery(
+    SyncPath path, {
+    required CancellationToken token,
+    bool allowMissing = false,
+  }) => _readEntryMetadata(
+    path,
+    token: token,
+    allowMissing: allowMissing,
+    includeFavorite: false,
+  );
 
   Uri _resourceUri(SyncPath path) {
     final segments = path.segments.map(Uri.encodeComponent).join('/');
@@ -689,7 +763,10 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
   static Map<String, String> conditionalHeaders(RemoteCondition condition) {
     return switch (condition) {
       CreateOnly() => const <String, String>{'If-None-Match': '*'},
-      MatchEtag(:final etag) => <String, String>{'If-Match': etag},
+      MatchEtag(:final etag) =>
+        _isHashValidator(etag)
+            ? const <String, String>{}
+            : <String, String>{'If-Match': etag},
       RemoteCondition() => throw const WebDavCompatibilityError(
         'Unsupported remote write condition.',
       ),
@@ -821,21 +898,45 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     CancellationToken token = const NeverCancelled(),
   }) async {
     token.throwIfCancelled();
-    final response = await _request<Response<dynamic>>(
-      token,
-      (cancelToken) => _dio.headUri<dynamic>(
-        _resourceUri(path),
-        options: Options(
-          followRedirects: false,
-          maxRedirects: 0,
-          validateStatus: (_) => true,
+    var currentUri = _resourceUri(path);
+    Response<dynamic>? response;
+    for (var redirectCount = 0; redirectCount <= 5; redirectCount++) {
+      token.throwIfCancelled();
+      response = await _request<Response<dynamic>>(
+        token,
+        (cancelToken) => _dio.headUri<dynamic>(
+          currentUri,
+          options: Options(
+            followRedirects: true,
+            maxRedirects: 5,
+            validateStatus: (_) => true,
+            headers: {
+              if (currentUri.host != _baseUri.host) 'Authorization': '',
+            },
+          ),
+          cancelToken: cancelToken,
         ),
-        cancelToken: cancelToken,
-      ),
-    );
-    if (response.statusCode == 404) return null;
+      );
+      final statusCode = response.statusCode ?? 0;
+      if ((statusCode == 301 ||
+              statusCode == 302 ||
+              statusCode == 303 ||
+              statusCode == 307 ||
+              statusCode == 308) &&
+          redirectCount < 5) {
+        final location = response.headers.value('location');
+        if (location != null && location.isNotEmpty) {
+          currentUri = currentUri.resolve(location);
+          continue;
+        }
+      }
+      break;
+    }
+    if (response!.statusCode == 404) return null;
     _requireStatus(response, path, const {200});
-    return _strongEtag(response.headers.value('etag'), path);
+    final etag = _optionalStrongEtag(response.headers.value('etag'));
+    if (etag.isNotEmpty) return etag;
+    return _contentValidator(path, token: token);
   }
 
   Future<List<WebDavResource>?> _propfindAt(
@@ -845,27 +946,48 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     bool allowMissing = false,
   }) async {
     token.throwIfCancelled();
-    final response = await _request<Response<String>>(
-      token,
-      (cancelToken) => _dio.requestUri<String>(
-        uri,
-        options: Options(
-          method: 'PROPFIND',
-          responseType: ResponseType.plain,
-          headers: const <String, String>{
-            'Depth': '1',
-            'Content-Type': 'application/xml; charset=utf-8',
-          },
-          followRedirects: false,
-          maxRedirects: 0,
-          validateStatus: (_) => true,
+    var currentUri = uri;
+    Response<String>? response;
+    for (var redirectCount = 0; redirectCount <= 5; redirectCount++) {
+      token.throwIfCancelled();
+      response = await _request<Response<String>>(
+        token,
+        (cancelToken) => _dio.requestUri<String>(
+          currentUri,
+          options: Options(
+            method: 'PROPFIND',
+            responseType: ResponseType.plain,
+            headers: const <String, String>{
+              'Depth': '1',
+              'Content-Type': 'application/xml; charset=utf-8',
+            },
+            followRedirects: false,
+            maxRedirects: 0,
+            validateStatus: (_) => true,
+          ),
+          cancelToken: cancelToken,
         ),
-        cancelToken: cancelToken,
-      ),
-    );
-    if (allowMissing && response.statusCode == 404) return null;
+      );
+      final statusCode = response.statusCode ?? 0;
+      if ((statusCode == 301 ||
+              statusCode == 302 ||
+              statusCode == 307 ||
+              statusCode == 308) &&
+          redirectCount < 5) {
+        final location = response.headers.value('location');
+        if (location != null && location.isNotEmpty) {
+          final nextUri = currentUri.resolve(location);
+          if (nextUri.scheme == 'https' && nextUri.host == parseBaseUri.host) {
+            currentUri = nextUri;
+            continue;
+          }
+        }
+      }
+      break;
+    }
+    if (allowMissing && response!.statusCode == 404) return null;
     final label = SyncPath.parse('.synctune-propfind');
-    _requireSuccess(response, label);
+    _requireSuccess(response!, label);
     final body = response.data;
     if (body == null || body.isEmpty) {
       throw const WebDavCompatibilityError('Empty PROPFIND response.');
@@ -879,21 +1001,42 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     CancellationToken token = const NeverCancelled(),
   }) async {
     token.throwIfCancelled();
-    final response = await _request<Response<dynamic>>(
-      token,
-      (cancelToken) => _dio.requestUri<dynamic>(
-        _resourceUri(directory),
-        options: Options(
-          method: 'MKCOL',
-          headers: conditionalHeaders(condition),
-          followRedirects: false,
-          maxRedirects: 0,
-          validateStatus: (_) => true,
+    var currentUri = _resourceUri(directory);
+    Response<dynamic>? response;
+    for (var redirectCount = 0; redirectCount <= 5; redirectCount++) {
+      token.throwIfCancelled();
+      response = await _request<Response<dynamic>>(
+        token,
+        (cancelToken) => _dio.requestUri<dynamic>(
+          currentUri,
+          options: Options(
+            method: 'MKCOL',
+            headers: conditionalHeaders(condition),
+            followRedirects: false,
+            maxRedirects: 0,
+            validateStatus: (_) => true,
+          ),
+          cancelToken: cancelToken,
         ),
-        cancelToken: cancelToken,
-      ),
-    );
-    final status = response.statusCode ?? 0;
+      );
+      final statusCode = response.statusCode ?? 0;
+      if ((statusCode == 301 ||
+              statusCode == 302 ||
+              statusCode == 307 ||
+              statusCode == 308) &&
+          redirectCount < 5) {
+        final location = response.headers.value('location');
+        if (location != null && location.isNotEmpty) {
+          final nextUri = currentUri.resolve(location);
+          if (nextUri.scheme == 'https' && nextUri.host == _baseUri.host) {
+            currentUri = nextUri;
+            continue;
+          }
+        }
+      }
+      break;
+    }
+    final status = response!.statusCode ?? 0;
     if (status == 405) {
       // Servers commonly use 405 for an existing collection. Verify the
       // resource instead of treating every 405 as success: a DAV file at the
@@ -977,7 +1120,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
       );
     }
     final actual = await _hashReadResult(content, token);
-    if (content.etag != resource.etag ||
+    if ((resource.etag.isNotEmpty && content.etag != resource.etag) ||
         actual.length != entry.size ||
         actual.sha256 != entry.sha256) {
       throw NeedsRescan(
@@ -988,6 +1131,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     await putMetadata(
       entry.path,
       entry,
+      contentEtag: resource.etag,
       condition: metadataCondition,
       token: token,
     );
@@ -1007,7 +1151,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     );
     if (content == null) throw const NeedsRescan('remote content disappeared');
     final actual = await _hashReadResult(content, token);
-    if (content.etag != resource.etag) {
+    if (resource.etag.isNotEmpty && content.etag != resource.etag) {
       throw const RemoteFileVerificationFailed(RemoteFileMismatch.etag);
     }
     if (actual.length != resource.size) {
@@ -1019,10 +1163,17 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     }
     final current = await propfind(resource.path, token: token);
     if (current.length != 1 ||
-        current.single.path != resource.path ||
         current.single.isCollection ||
-        current.single.etag != resource.etag ||
-        current.single.size != resource.size) {
+        current.single.size != resource.size ||
+        (resource.etag.isNotEmpty &&
+            current.single.etag.isNotEmpty &&
+            current.single.etag != resource.etag) ||
+        (resource.etag.isEmpty &&
+            (current.single.modifiedAtUtc
+                        .difference(resource.modifiedAtUtc)
+                        .inSeconds)
+                    .abs() >
+                1)) {
       throw const RemoteFileVerificationFailed(RemoteFileMismatch.etag);
     }
     await putMetadata(
@@ -1034,6 +1185,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
         modifiedAtUtc: resource.modifiedAtUtc,
         sha256: actual.sha256,
       ),
+      contentEtag: resource.etag,
       condition: const CreateOnly(),
       token: token,
     );
@@ -1059,29 +1211,69 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     String? ifMatch,
   }) async {
     token.throwIfCancelled();
-    final response = await _request<Response<ResponseBody>>(
-      token,
-      (cancelToken) => _dio.getUri<ResponseBody>(
-        _resourceUri(path),
-        options: Options(
-          responseType: ResponseType.stream,
-          // DAV metadata describes the stored representation. Compression can
-          // select a different ETag for GET even when the song is unchanged.
-          headers: {'Accept-Encoding': 'identity', 'If-Match': ?ifMatch},
-          followRedirects: false,
-          maxRedirects: 0,
-          validateStatus: (_) => true,
+    var currentUri = _resourceUri(path);
+    Response<ResponseBody>? response;
+    for (var redirectCount = 0; redirectCount <= 5; redirectCount++) {
+      token.throwIfCancelled();
+      response = await _request<Response<ResponseBody>>(
+        token,
+        (cancelToken) => _dio.getUri<ResponseBody>(
+          currentUri,
+          options: Options(
+            responseType: ResponseType.stream,
+            // DAV metadata describes the stored representation. Compression can
+            // select a different ETag for GET even when the song is unchanged.
+            headers: {
+              'Accept-Encoding': 'identity',
+              if (ifMatch != null &&
+                  ifMatch.isNotEmpty &&
+                  !_isHashValidator(ifMatch) &&
+                  redirectCount == 0)
+                'If-Match': ifMatch,
+              if (currentUri.host != _baseUri.host) 'Authorization': '',
+            },
+            followRedirects: true,
+            maxRedirects: 5,
+            validateStatus: (_) => true,
+          ),
+          cancelToken: cancelToken,
         ),
-        cancelToken: cancelToken,
-      ),
-    );
-    if (allowMissing && response.statusCode == 404) return null;
-    _requireStatus(response, path, const {200});
+      );
+      final statusCode = response.statusCode ?? 0;
+      if ((statusCode == 301 ||
+              statusCode == 302 ||
+              statusCode == 303 ||
+              statusCode == 307 ||
+              statusCode == 308) &&
+          redirectCount < 5) {
+        final location = response.headers.value('location');
+        if (location != null && location.isNotEmpty) {
+          currentUri = currentUri.resolve(location);
+          continue;
+        }
+      }
+      break;
+    }
+    if (allowMissing && response!.statusCode == 404) return null;
+    _requireStatus(response!, path, const {200});
     final body = response.data;
     if (body == null) throw const WebDavCompatibilityError('Empty GET body.');
+    final responseEtag = _optionalStrongEtag(response.headers.value('etag'));
+    final expectedHash = ifMatch != null && _isHashValidator(ifMatch)
+        ? ifMatch.substring(_hashValidatorPrefix.length, ifMatch.length - 1)
+        : null;
     return WebDavReadResult(
-      stream: _cancelableStream(body.stream, token),
-      etag: _strongEtag(response.headers.value('etag'), path),
+      stream: _verifyReadHash(
+        _cancelableStream(body.stream, token),
+        expectedHash,
+      ),
+      // A successful If-Match request may omit ETag in its response. The
+      // request still pinned the server version; weak validators are unused.
+      etag: expectedHash != null
+          ? ifMatch!
+          : responseEtag.isNotEmpty
+          ? responseEtag
+          : (ifMatch ?? ''),
     );
   }
 
@@ -1097,44 +1289,71 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     token.throwIfCancelled();
     await _ensureParentCollections(path, token: token);
     token.throwIfCancelled();
-    var sentBytes = 0;
-    final response = await _request<Response<dynamic>>(
+    await _checkHashCondition(
+      _entryMetadataPath(path),
+      metadataCondition,
       token,
-      (cancelToken) => _dio.putUri<dynamic>(
-        _resourceUri(path),
-        data: content.map((chunk) {
-          token.throwIfCancelled();
-          sentBytes += chunk.length;
-          reportSyncBytes(token, sentBytes, total: entry.size);
-          return chunk;
-        }),
-        options: Options(
-          contentType: 'application/octet-stream',
-          headers: conditionalHeaders(condition),
-          followRedirects: false,
-          maxRedirects: 0,
-          validateStatus: (_) => true,
-        ),
-        cancelToken: cancelToken,
-      ),
     );
-    _requireStatus(response, path, const {200, 201, 204});
-    final etag = _strongEtag(response.headers.value('etag'), path);
+    await _checkHashCondition(path, condition, token);
+    var skipContentPut = false;
+    var etag = '';
+    if (condition is MatchEtag && entry.sha256 != null) {
+      if (_isHashValidator(condition.etag)) {
+        skipContentPut = condition.etag == _hashValidator(entry.sha256!);
+      } else {
+        final existing = await _readDescriptorForRecovery(
+          path,
+          token: token,
+          allowMissing: true,
+        );
+        if (existing != null && existing.entry.sha256 == entry.sha256) {
+          skipContentPut = true;
+        }
+      }
+    }
+    if (skipContentPut) {
+      reportSyncBytes(token, entry.size, total: entry.size);
+      etag = (condition as MatchEtag).etag;
+    } else {
+      var sentBytes = 0;
+      final response = await _request<Response<dynamic>>(
+        token,
+        (cancelToken) => _dio.putUri<dynamic>(
+          _resourceUri(path),
+          data: content.map((chunk) {
+            token.throwIfCancelled();
+            sentBytes += chunk.length;
+            reportSyncBytes(token, sentBytes, total: entry.size);
+            return chunk;
+          }),
+          options: Options(
+            contentType: 'application/octet-stream',
+            headers: conditionalHeaders(condition),
+            followRedirects: false,
+            maxRedirects: 0,
+            validateStatus: (_) => true,
+          ),
+          cancelToken: cancelToken,
+        ),
+      );
+      _requireStatus(response, path, const {200, 201, 204});
+      etag = await _validatorAfterWrite(
+        response,
+        path,
+        entry.sha256!,
+        token,
+      );
+    }
     try {
       await putMetadata(
         path,
         entry,
+        contentEtag: etag,
         condition: metadataCondition,
         token: token,
       );
     } catch (error) {
-      // The content object is already committed. Do not continue a stale
-      // operation after its identity metadata CAS failed.
-      if (error is RemotePreconditionFailed ||
-          error is WebDavCompatibilityError ||
-          error is SyncCancelled) {
-        throw NeedsRescan('content committed but metadata CAS failed: $error');
-      }
+      if (error is SyncCancelled) rethrow;
       throw NeedsRescan('content committed but metadata CAS failed: $error');
     }
     return etag;
@@ -1153,6 +1372,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
   Future<String> putMetadata(
     SyncPath path,
     SyncEntry entry, {
+    String? contentEtag,
     required RemoteCondition condition,
     CancellationToken token = const NeverCancelled(),
   }) async {
@@ -1165,6 +1385,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     final metadataPath = _entryMetadataPath(path);
     await _ensureParentCollections(metadataPath, token: token);
     token.throwIfCancelled();
+    await _checkHashCondition(metadataPath, condition, token);
     final builder = XmlBuilder();
     builder.processing('xml', 'version="1.0" encoding="UTF-8"');
     builder.element(
@@ -1181,27 +1402,54 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
         'favoriteLamport': '${entry.favorite.lamport}',
         'favoriteDevice': entry.favorite.deviceId,
         if (entry.sha256 != null) 'sha256': entry.sha256!,
+        if (contentEtag != null && contentEtag.isNotEmpty)
+          'contentEtag': contentEtag,
       },
     );
-    final response = await _request<Response<dynamic>>(
+    final bytes = utf8.encode(builder.buildDocument().toXmlString());
+    var currentUri = _resourceUri(metadataPath);
+    Response<dynamic>? response;
+    for (var redirectCount = 0; redirectCount <= 5; redirectCount++) {
+      token.throwIfCancelled();
+      response = await _request<Response<dynamic>>(
+        token,
+        (cancelToken) => _dio.putUri<dynamic>(
+          currentUri,
+          data: Stream<List<int>>.value(bytes),
+          options: Options(
+            contentType: 'application/xml',
+            headers: conditionalHeaders(condition),
+            followRedirects: false,
+            maxRedirects: 0,
+            validateStatus: (_) => true,
+          ),
+          cancelToken: cancelToken,
+        ),
+      );
+      final statusCode = response.statusCode ?? 0;
+      if ((statusCode == 301 ||
+              statusCode == 302 ||
+              statusCode == 307 ||
+              statusCode == 308) &&
+          redirectCount < 5) {
+        final location = response.headers.value('location');
+        if (location != null && location.isNotEmpty) {
+          final nextUri = currentUri.resolve(location);
+          if (nextUri.scheme == 'https' && nextUri.host == _baseUri.host) {
+            currentUri = nextUri;
+            continue;
+          }
+        }
+      }
+      break;
+    }
+    _requireStatus(response!, metadataPath, const {200, 201, 204});
+    return _validatorAfterWrite(
+      response,
+      metadataPath,
+      sha256.convert(bytes).toString(),
       token,
-      (cancelToken) => _dio.putUri<dynamic>(
-        _resourceUri(metadataPath),
-        data: Stream<List<int>>.value(
-          utf8.encode(builder.buildDocument().toXmlString()),
-        ),
-        options: Options(
-          contentType: 'application/xml',
-          headers: conditionalHeaders(condition),
-          followRedirects: false,
-          maxRedirects: 0,
-          validateStatus: (_) => true,
-        ),
-        cancelToken: cancelToken,
-      ),
     );
-    _requireStatus(response, metadataPath, const {200, 201, 204});
-    return _strongEtag(response.headers.value('etag'), metadataPath);
   }
 
   @override
@@ -1232,20 +1480,53 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
       // keeps unsupported future condition types from mutating remote state.
       conditionalHeaders(metadataCondition!);
     }
-    final response = await _request<Response<dynamic>>(
-      token,
-      (cancelToken) => _dio.deleteUri<dynamic>(
-        _resourceUri(path),
-        options: Options(
-          headers: conditionalHeaders(condition),
-          followRedirects: false,
-          maxRedirects: 0,
-          validateStatus: (_) => true,
+    await _checkHashCondition(path, condition, token);
+    if (metadataCondition != null) {
+      await _checkHashCondition(
+        _entryMetadataPath(path),
+        metadataCondition,
+        token,
+      );
+    }
+    var currentUri = _resourceUri(path);
+    Response<dynamic>? response;
+    for (var redirectCount = 0; redirectCount <= 5; redirectCount++) {
+      token.throwIfCancelled();
+      response = await _request<Response<dynamic>>(
+        token,
+        (cancelToken) => _dio.deleteUri<dynamic>(
+          currentUri,
+          options: Options(
+            headers: conditionalHeaders(condition),
+            followRedirects: false,
+            maxRedirects: 0,
+            validateStatus: (_) => true,
+          ),
+          cancelToken: cancelToken,
         ),
-        cancelToken: cancelToken,
-      ),
-    );
-    await _requireDeleteSuccess(response, path);
+      );
+      final statusCode = response.statusCode ?? 0;
+      if ((statusCode == 301 ||
+              statusCode == 302 ||
+              statusCode == 307 ||
+              statusCode == 308) &&
+          redirectCount < 5) {
+        final location = response.headers.value('location');
+        if (location != null && location.isNotEmpty) {
+          final nextUri = currentUri.resolve(location);
+          if (nextUri.scheme == 'https' && nextUri.host == _baseUri.host) {
+            currentUri = nextUri;
+            continue;
+          }
+        }
+      }
+      break;
+    }
+    await _requireDeleteSuccess(response!, path);
+    if (_isHashValidator(condition.etag) &&
+        await _contentValidator(path, token: token) != null) {
+      throw const NeedsRescan('remote delete did not remove content');
+    }
     if (tombstone != null) {
       try {
         await putMetadata(
@@ -1273,6 +1554,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     final metadataPath = _favoriteMetadataPath(path);
     await _ensureParentCollections(metadataPath, token: token);
     token.throwIfCancelled();
+    await _checkHashCondition(metadataPath, condition, token);
     final builder = XmlBuilder();
     builder.processing('xml', 'version="1.0" encoding="UTF-8"');
     builder.element(
@@ -1285,35 +1567,105 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
       },
     );
     final body = utf8.encode(builder.buildDocument().toXmlString());
-    final response = await _request<Response<dynamic>>(
-      token,
-      (cancelToken) => _dio.putUri<dynamic>(
-        _resourceUri(metadataPath),
-        data: Stream<List<int>>.value(body),
-        options: Options(
-          contentType: 'application/xml',
-          headers: conditionalHeaders(condition),
-          followRedirects: false,
-          maxRedirects: 0,
-          validateStatus: (_) => true,
+    var currentUri = _resourceUri(metadataPath);
+    Response<dynamic>? response;
+    for (var redirectCount = 0; redirectCount <= 5; redirectCount++) {
+      token.throwIfCancelled();
+      response = await _request<Response<dynamic>>(
+        token,
+        (cancelToken) => _dio.putUri<dynamic>(
+          currentUri,
+          data: Stream<List<int>>.value(body),
+          options: Options(
+            contentType: 'application/xml',
+            headers: conditionalHeaders(condition),
+            followRedirects: false,
+            maxRedirects: 0,
+            validateStatus: (_) => true,
+          ),
+          cancelToken: cancelToken,
         ),
-        cancelToken: cancelToken,
-      ),
+      );
+      final statusCode = response.statusCode ?? 0;
+      if ((statusCode == 301 ||
+              statusCode == 302 ||
+              statusCode == 307 ||
+              statusCode == 308) &&
+          redirectCount < 5) {
+        final location = response.headers.value('location');
+        if (location != null && location.isNotEmpty) {
+          final nextUri = currentUri.resolve(location);
+          if (nextUri.scheme == 'https' && nextUri.host == _baseUri.host) {
+            currentUri = nextUri;
+            continue;
+          }
+        }
+      }
+      break;
+    }
+    _requireStatus(response!, metadataPath, const {200, 201, 204});
+    await _validatorAfterWrite(
+      response,
+      metadataPath,
+      sha256.convert(body).toString(),
+      token,
     );
-    _requireStatus(response, metadataPath, const {200, 201, 204});
-    _strongEtag(response.headers.value('etag'), metadataPath);
   }
 
-  static String _strongEtag(String? value, SyncPath path) {
-    if (value == null) {
-      throw WebDavCompatibilityError('Missing strong ETag for $path.');
-    }
+  static String _optionalStrongEtag(String? value) {
+    if (value == null || value.isEmpty) return '';
     try {
-      MatchEtag(value);
+      MatchEtag(value.trim());
     } on FormatException {
-      throw WebDavCompatibilityError('Weak or invalid ETag for $path.');
+      return '';
     }
-    return value;
+    return value.trim();
+  }
+
+  // Internal checksum tokens use the core's opaque validator slot. They are
+  // never sent as an HTTP ETag or an If-Match header.
+  static const _hashValidatorPrefix = '"synctune-sha256-';
+  static String _hashValidator(String hash) => '$_hashValidatorPrefix$hash"';
+  static bool _isHashValidator(String value) =>
+      RegExp(r'^"synctune-sha256-[0-9a-f]{64}"$').hasMatch(value);
+  static String _validatorForBytes(String etag, List<int> bytes) =>
+      etag.isNotEmpty ? etag : _hashValidator(sha256.convert(bytes).toString());
+
+  Future<String?> _contentValidator(
+    SyncPath path, {
+    required CancellationToken token,
+  }) async {
+    final content = await readWithEtag(path, allowMissing: true, token: token);
+    if (content == null) return null;
+    final actual = await _hashReadResult(content, token);
+    return _hashValidator(actual.sha256);
+  }
+
+  Future<void> _checkHashCondition(
+    SyncPath path,
+    RemoteCondition condition,
+    CancellationToken token,
+  ) async {
+    if (condition is! MatchEtag || !_isHashValidator(condition.etag)) return;
+    if (await _contentValidator(path, token: token) != condition.etag) {
+      throw RemotePreconditionFailed(path);
+    }
+    token.throwIfCancelled();
+  }
+
+  Future<String> _validatorAfterWrite(
+    Response<dynamic> response,
+    SyncPath path,
+    String expectedHash,
+    CancellationToken token,
+  ) async {
+    final etag = _optionalStrongEtag(response.headers.value('etag'));
+    if (etag.isNotEmpty) return etag;
+    final actual = await _contentValidator(path, token: token);
+    if (actual != _hashValidator(expectedHash)) {
+      throw const RemoteFileVerificationFailed(RemoteFileMismatch.hash);
+    }
+    return actual!;
   }
 
   static List<WebDavResource> parsePropfind(String xml, {Uri? baseUri}) {
@@ -1468,11 +1820,10 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
       }
       // Collection ETags are optional; only file bytes and descriptors use CAS.
       // Apache/mod_dav commonly omits getetag for directories.
-      if (!collection) _strongEtag(etag, path);
       resources.add(
         WebDavResource(
           path: path,
-          etag: etag ?? '',
+          etag: _optionalStrongEtag(etag),
           size: size,
           modifiedAtUtc: modified.toUtc(),
           isCollection: collection,
@@ -1673,13 +2024,48 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
           'WebDAV snapshot exceeded its item safety limit.',
         );
       }
-      final metadata = (await _readEntryMetadata(resource.path, token: token))!;
-      if (metadata.entry.kind != SyncEntryKind.file ||
-          metadata.entry.size != resource.size) {
-        throw WebDavCompatibilityError(
-          'Content and identity metadata disagree for ${resource.path}.',
-        );
+      final metadata = await _readEntryMetadata(
+        resource.path,
+        token: token,
+        allowMissing: true,
+      );
+      if (metadata == null) {
+        throw RemoteMusicImportRequired(resource.path);
       }
+      final sizeMatches = metadata.entry.size == resource.size;
+      final etagMatches = resource.etag.isNotEmpty &&
+          metadata.contentEtag != null &&
+          metadata.contentEtag!.isNotEmpty &&
+          resource.etag == metadata.contentEtag;
+      final mtimeMatches = (resource.modifiedAtUtc
+                  .difference(metadata.entry.modifiedAtUtc)
+                  .inSeconds)
+              .abs() <=
+          1;
+      final unchanged =
+          sizeMatches &&
+          (etagMatches ||
+              ((metadata.contentEtag == null ||
+                      metadata.contentEtag!.isEmpty ||
+                      resource.etag.isEmpty) &&
+                  mtimeMatches));
+
+      if (unchanged) {
+        entries[resource.path] = RemoteObject(
+          entry: metadata.entry,
+          etag: resource.etag.isNotEmpty
+              ? resource.etag
+              : (metadata.contentEtag != null && metadata.contentEtag!.isNotEmpty
+                  ? metadata.contentEtag!
+                  : (metadata.entry.sha256 != null
+                      ? WebDavRepository._hashValidator(metadata.entry.sha256!)
+                      : '')),
+          metadataEtag: metadata.etag,
+          favoriteEtag: metadata.favoriteEtag,
+        );
+        continue;
+      }
+
       final content = await _repository.readWithEtag(
         resource.path,
         token: token,
@@ -1691,22 +2077,20 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
         );
       }
       final actual = await _hashReadResult(content, token);
-      if (content.etag != resource.etag) {
-        throw const RemoteFileVerificationFailed(RemoteFileMismatch.etag);
-      }
-      if (actual.length != metadata.entry.size) {
-        throw RemoteFileVerificationFailed(
-          RemoteFileMismatch.length,
-          expected: metadata.entry.size,
-          actual: actual.length,
-        );
-      }
-      if (actual.sha256 != metadata.entry.sha256) {
-        throw const RemoteFileVerificationFailed(RemoteFileMismatch.hash);
-      }
+      final updatedEntry = SyncEntry.file(
+        id: metadata.entry.id,
+        path: resource.path,
+        size: actual.length,
+        modifiedAtUtc: resource.modifiedAtUtc,
+        sha256: actual.sha256,
+        revision: metadata.entry.revision + 1,
+        favorite: metadata.entry.favorite,
+      );
       entries[resource.path] = RemoteObject(
-        entry: metadata.entry,
-        etag: content.etag,
+        entry: updatedEntry,
+        etag: content.etag.isNotEmpty
+            ? content.etag
+            : WebDavRepository._hashValidator(actual.sha256),
         metadataEtag: metadata.etag,
         favoriteEtag: metadata.favoriteEtag,
       );
@@ -1752,11 +2136,6 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
         );
       }
     }
-    if (resources.length > 10000) {
-      throw const WebDavCompatibilityError(
-        'WebDAV metadata exceeded its item safety limit.',
-      );
-    }
     for (final resource in resources) {
       final path = _logicalPathFromEntryMetadata(resource.path);
       final metadata = (await _readEntryMetadata(path, token: token))!;
@@ -1764,21 +2143,12 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
       if (current != null &&
           !current.entry.isDeleted &&
           !metadata.entry.isDeleted &&
-          (!metadata.entry.contentEquals(current.entry) ||
-              metadata.etag != current.metadataEtag)) {
-        // The content was hashed against the descriptor seen during the
-        // first walk. A descriptor replacement between those reads must stop
-        // the run; otherwise a new hash/identity could be paired with the
-        // old content ETag and incorrectly become a confirmed baseline.
+          metadata.etag != current.metadataEtag) {
         throw NeedsRescan(
           'Identity metadata changed while scanning ${path.value}.',
         );
       }
       if (metadata.entry.isDeleted && current != null) {
-        // A Depth-1 listing can race the content DELETE. Confirm the live
-        // object itself before treating the pair as an ambiguous protocol
-        // state; a 404 means the tombstone is the authoritative remaining
-        // record, while a live object still requires a fresh reconciliation.
         final liveEtag = await _repository.headEtag(path, token: token);
         if (liveEtag != null) {
           throw WebDavCompatibilityError(
@@ -1788,11 +2158,19 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
         entries.remove(path);
       }
       if (!metadata.entry.isDeleted && current == null) {
-        throw WebDavCompatibilityError(
-          'Identity metadata has no live content for ${path.value}.',
+        entries[path] = RemoteObject(
+          entry: SyncEntry.tombstone(
+            id: metadata.entry.id,
+            path: path,
+            modifiedAtUtc: metadata.entry.modifiedAtUtc,
+            revision: metadata.entry.revision + 1,
+            favorite: metadata.entry.favorite,
+          ),
+          etag: null,
+          metadataEtag: metadata.etag,
+          favoriteEtag: metadata.favoriteEtag,
         );
-      }
-      if (metadata.entry.isDeleted) {
+      } else if (metadata.entry.isDeleted) {
         entries[path] = RemoteObject(
           entry: metadata.entry,
           etag: current?.etag,
@@ -1801,7 +2179,7 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
         );
       } else if (current != null) {
         entries[path] = RemoteObject(
-          entry: metadata.entry,
+          entry: current.entry,
           etag: current.etag,
           metadataEtag: metadata.etag,
           favoriteEtag: metadata.favoriteEtag,
@@ -1824,12 +2202,14 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
     );
     try {
       return SyncPath.parse(Uri.decodeComponent(encoded));
-    } on FormatException {
-      rethrow;
-    } catch (error) {
-      throw WebDavCompatibilityError(
-        'Invalid identity metadata path ${metadataPath.value}: $error',
-      );
+    } catch (_) {
+      try {
+        return SyncPath.parse(encoded);
+      } catch (error) {
+        throw WebDavCompatibilityError(
+          'Invalid identity metadata path ${metadataPath.value}: $error',
+        );
+      }
     }
   }
 
@@ -1837,146 +2217,11 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
     SyncPath path, {
     required CancellationToken token,
     bool allowMissing = false,
-  }) async {
-    final documentResult = await _repository.readWithEtag(
-      WebDavRepository._entryMetadataPath(path),
-      token: token,
-      allowMissing: true,
-    );
-    if (documentResult == null) {
-      if (allowMissing) return null;
-      throw RemoteMusicImportRequired(path);
-    }
-    final bytes = <int>[];
-    await for (final chunk in documentResult.stream) {
-      token.throwIfCancelled();
-      bytes.addAll(chunk);
-      if (bytes.length > 256 * 1024) {
-        throw const WebDavCompatibilityError(
-          'Identity metadata document exceeded its size limit.',
-        );
-      }
-    }
-    final document = XmlDocument.parse(utf8.decode(bytes));
-    final root = document.rootElement;
-    if (root.name.local != 'entry' ||
-        root.name.namespaceUri != 'urn:synctune:v1') {
-      throw const WebDavCompatibilityError('Invalid entry metadata document.');
-    }
-    String requiredAttribute(String name) {
-      final value = root.getAttribute(name);
-      if (value == null || value.isEmpty) {
-        throw WebDavCompatibilityError('Missing metadata attribute $name.');
-      }
-      return value;
-    }
-
-    final id = requiredAttribute('id');
-    final metadataPath = SyncPath.parse(requiredAttribute('path'));
-    if (metadataPath != path) {
-      throw WebDavCompatibilityError(
-        'Metadata path does not match ${path.value}.',
-      );
-    }
-    final kind = requiredAttribute('kind');
-    final modified = DateTime.tryParse(requiredAttribute('modifiedAtUtc'));
-    final revision = int.tryParse(requiredAttribute('revision'));
-    final size = int.tryParse(requiredAttribute('size'));
-    final favoriteValue = requiredAttribute('favorite');
-    final favoriteLamport = int.tryParse(requiredAttribute('favoriteLamport'));
-    final favoriteDevice = root.getAttribute('favoriteDevice');
-    if (modified == null ||
-        revision == null ||
-        revision < 0 ||
-        size == null ||
-        size < 0 ||
-        favoriteLamport == null ||
-        favoriteLamport < 0 ||
-        favoriteDevice == null ||
-        (favoriteValue != 'true' && favoriteValue != 'false')) {
-      throw const WebDavCompatibilityError('Invalid entry metadata values.');
-    }
-    final favorite = FavoriteStamp(
-      value: favoriteValue == 'true',
-      lamport: favoriteLamport,
-      deviceId: favoriteDevice,
-    );
-    final entry = switch (kind) {
-      'file' => SyncEntry.file(
-        id: id,
-        path: path,
-        size: size,
-        modifiedAtUtc: modified,
-        sha256: requiredAttribute('sha256'),
-        revision: revision,
-        favorite: favorite,
-      ),
-      'directory' => SyncEntry.directory(
-        id: id,
-        path: path,
-        modifiedAtUtc: modified,
-        revision: revision,
-        favorite: favorite,
-      ),
-      'tombstone' => SyncEntry.tombstone(
-        id: id,
-        path: path,
-        modifiedAtUtc: modified,
-        revision: revision,
-        favorite: favorite,
-      ),
-      _ => throw WebDavCompatibilityError('Unknown metadata kind $kind.'),
-    };
-    final favoriteResult = await _repository.readWithEtag(
-      WebDavRepository._favoriteMetadataPath(path),
-      token: token,
-      allowMissing: true,
-    );
-    if (favoriteResult == null) {
-      return _EntryMetadata(entry: entry, etag: documentResult.etag);
-    }
-    final favoriteBytes = <int>[];
-    await for (final chunk in favoriteResult.stream) {
-      token.throwIfCancelled();
-      favoriteBytes.addAll(chunk);
-      if (favoriteBytes.length > 64 * 1024) {
-        throw const WebDavCompatibilityError(
-          'Favorite metadata document exceeded its size limit.',
-        );
-      }
-    }
-    final favoriteDocument = XmlDocument.parse(utf8.decode(favoriteBytes));
-    final favoriteRoot = favoriteDocument.rootElement;
-    if (favoriteRoot.name.local != 'favorite' ||
-        favoriteRoot.name.namespaceUri != 'urn:synctune:v1') {
-      throw const WebDavCompatibilityError(
-        'Invalid favorite metadata document.',
-      );
-    }
-    final favoriteRaw = favoriteRoot.getAttribute('value');
-    final lamportRaw = favoriteRoot.getAttribute('lamport');
-    final device = favoriteRoot.getAttribute('device');
-    final lamport = lamportRaw == null ? null : int.tryParse(lamportRaw);
-    if ((favoriteRaw != 'true' && favoriteRaw != 'false') ||
-        lamport == null ||
-        lamport < 0 ||
-        device == null ||
-        device.isEmpty) {
-      throw const WebDavCompatibilityError('Invalid favorite metadata values.');
-    }
-    final mergedEntry = entry.copyWith(
-      favorite: FavoriteStamp(
-        value: favoriteRaw == 'true',
-        lamport: lamport,
-        deviceId: device,
-      ),
-    );
-    return _EntryMetadata(
-      entry: mergedEntry,
-      etag: documentResult.etag,
-      favoriteEtag: favoriteResult.etag,
-    );
-  }
+  }) => _repository._readEntryMetadata(
+    path,
+    token: token,
+    allowMissing: allowMissing,
+  );
 
   bool _isMetadataPath(SyncPath path) =>
       path.value == '.synctune' || path.value.startsWith('.synctune/');
@@ -1987,6 +2232,26 @@ final class _HashedReadResult {
 
   final String sha256;
   final int length;
+}
+
+Stream<List<int>> _verifyReadHash(
+  Stream<List<int>> stream,
+  String? expected,
+) async* {
+  if (expected == null) {
+    yield* stream;
+    return;
+  }
+  final accumulator = _DigestAccumulator();
+  final converter = sha256.startChunkedConversion(accumulator);
+  await for (final chunk in stream) {
+    converter.add(chunk);
+    yield chunk;
+  }
+  converter.close();
+  if (accumulator.digest.toString() != expected) {
+    throw const RemoteFileVerificationFailed(RemoteFileMismatch.hash);
+  }
 }
 
 final class _DigestAccumulator implements Sink<Digest> {
@@ -2078,13 +2343,11 @@ final class _EntryMetadata {
   const _EntryMetadata({
     required this.entry,
     required this.etag,
+    this.contentEtag,
     this.favoriteEtag,
   });
   final SyncEntry entry;
   final String etag;
+  final String? contentEtag;
   final String? favoriteEtag;
-}
-
-extension on Iterable<XmlElement> {
-  XmlElement? get firstOrNull => isEmpty ? null : first;
 }

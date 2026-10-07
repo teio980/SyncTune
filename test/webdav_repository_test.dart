@@ -170,70 +170,79 @@ void main() {
     });
   });
 
-  test('nested writes create parent collections and verify 405 idempotence', () async {
-    final adapter = _QueueAdapter([
-      _ok(), // album MKCOL
-      _ok(), // disc MKCOL
-      _ok(), // content PUT
-      _ok(), // .synctune MKCOL
-      _ok(), // entries MKCOL
-      _ok(), // descriptor PUT
-    ]);
-    final dio = Dio()..httpClientAdapter = adapter;
-    addTearDown(dio.close);
-    final repository = WebDavRepository(
-      dio: dio,
-      baseUri: Uri.parse('https://dav.test/music/'),
-    );
-    final nested = SyncPath.parse('album/disc/song.mp3');
-    final entry = SyncEntry.file(
-      id: 'song-id',
-      path: nested,
-      size: 3,
-      modifiedAtUtc: DateTime.utc(2026, 10, 6),
-      sha256:
-          'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-    );
-    await repository.put(
-      nested,
-      Stream.value(utf8.encode('abc')),
-      entry: entry,
-      condition: const CreateOnly(),
-      metadataCondition: const CreateOnly(),
-    );
-    expect(
-      adapter.requests.map((request) => request.options.method),
-      ['MKCOL', 'MKCOL', 'PUT', 'MKCOL', 'MKCOL', 'PUT'],
-    );
-    expect(adapter.requests[0].options.uri.path, endsWith('/album'));
-    expect(adapter.requests[1].options.uri.path, endsWith('/album/disc'));
+  test(
+    'nested writes create parent collections and verify 405 idempotence',
+    () async {
+      final adapter = _QueueAdapter([
+        _ok(), // album MKCOL
+        _ok(), // disc MKCOL
+        _ok(), // content PUT
+        _ok(), // .synctune MKCOL
+        _ok(), // entries MKCOL
+        _ok(), // descriptor PUT
+      ]);
+      final dio = Dio()..httpClientAdapter = adapter;
+      addTearDown(dio.close);
+      final repository = WebDavRepository(
+        dio: dio,
+        baseUri: Uri.parse('https://dav.test/music/'),
+      );
+      final nested = SyncPath.parse('album/disc/song.mp3');
+      final entry = SyncEntry.file(
+        id: 'song-id',
+        path: nested,
+        size: 3,
+        modifiedAtUtc: DateTime.utc(2026, 10, 6),
+        sha256:
+            'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+      );
+      await repository.put(
+        nested,
+        Stream.value(utf8.encode('abc')),
+        entry: entry,
+        condition: const CreateOnly(),
+        metadataCondition: const CreateOnly(),
+      );
+      expect(adapter.requests.map((request) => request.options.method), [
+        'MKCOL',
+        'MKCOL',
+        'PUT',
+        'MKCOL',
+        'MKCOL',
+        'PUT',
+      ]);
+      expect(adapter.requests[0].options.uri.path, endsWith('/album'));
+      expect(adapter.requests[1].options.uri.path, endsWith('/album/disc'));
 
-    final collectionXml = '''
+      final collectionXml = '''
       <D:multistatus xmlns:D="DAV:"><D:response>
         <D:href>/music/album</D:href><D:propstat><D:prop>
           <D:getetag>"album"</D:getetag><D:resourcetype><D:collection/></D:resourcetype>
         </D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
       </D:response></D:multistatus>
     ''';
-    final verifyAdapter = _QueueAdapter([
-      ResponseBody.fromString('', 405),
-      ResponseBody.fromString(collectionXml, 207),
-    ]);
-    final verifyDio = Dio()..httpClientAdapter = verifyAdapter;
-    addTearDown(verifyDio.close);
-    final verifyRepository = WebDavRepository(
-      dio: verifyDio,
-      baseUri: Uri.parse('https://dav.test/music/'),
-    );
-    await verifyRepository.mkcol(SyncPath.parse('album'));
-    expect(verifyAdapter.requests.map((request) => request.options.method), [
-      'MKCOL',
-      'PROPFIND',
-    ]);
-  });
+      final verifyAdapter = _QueueAdapter([
+        ResponseBody.fromString('', 405),
+        ResponseBody.fromString(collectionXml, 207),
+      ]);
+      final verifyDio = Dio()..httpClientAdapter = verifyAdapter;
+      addTearDown(verifyDio.close);
+      final verifyRepository = WebDavRepository(
+        dio: verifyDio,
+        baseUri: Uri.parse('https://dav.test/music/'),
+      );
+      await verifyRepository.mkcol(SyncPath.parse('album'));
+      expect(verifyAdapter.requests.map((request) => request.options.method), [
+        'MKCOL',
+        'PROPFIND',
+      ]);
+    },
+  );
 
-  test('PROPFIND parser requires strong ETag and preserves metadata', () {
-    const xml = '''
+  test(
+    'PROPFIND parser preserves metadata and leaves weak validators unused',
+    () {
+      const xml = '''
       <D:multistatus xmlns:D="DAV:">
         <D:response>
           <D:href>/dav/music/album/song.mp3</D:href>
@@ -248,20 +257,22 @@ void main() {
         </D:response>
       </D:multistatus>
     ''';
-    final resources = WebDavRepository.parsePropfind(
-      xml,
-      baseUri: Uri.parse('https://dav.test/dav/music/'),
-    );
-    expect(resources, hasLength(1));
-    expect(resources.single.path.value, 'album/song.mp3');
-    expect(resources.single.etag, '"abc"');
-    expect(resources.single.size, 42);
-    expect(
-      () =>
-          WebDavRepository.parsePropfind(xml.replaceFirst('"abc"', 'W/"weak"')),
-      throwsA(isA<WebDavCompatibilityError>()),
-    );
-  });
+      final resources = WebDavRepository.parsePropfind(
+        xml,
+        baseUri: Uri.parse('https://dav.test/dav/music/'),
+      );
+      expect(resources, hasLength(1));
+      expect(resources.single.path.value, 'album/song.mp3');
+      expect(resources.single.etag, '"abc"');
+      expect(resources.single.size, 42);
+      expect(
+        WebDavRepository.parsePropfind(xml.replaceFirst('"abc"', 'W/"weak"'))
+            .single
+            .etag,
+        isEmpty,
+      );
+    },
+  );
 
   test(
     'PROPFIND accepts collection optional fields and literal percent paths',
@@ -331,13 +342,6 @@ void main() {
           },
         ),
         ResponseBody.fromString('', 404),
-        ResponseBody.fromBytes(
-          utf8.encode('abc'),
-          200,
-          headers: {
-            'etag': ['"song"'],
-          },
-        ),
         ResponseBody.fromString('''
         <D:multistatus xmlns:D="DAV:"><D:response><D:href>/dav/music/album/</D:href>
           <D:propstat><D:prop><D:getetag>"album"</D:getetag>
@@ -472,5 +476,102 @@ void main() {
     expect(adapter.requests[2].options.method, 'MKCOL');
     expect(adapter.requests[3].options.method, 'MKCOL');
     expect(adapter.requests[4].options.headers['If-None-Match'], '*');
+  });
+
+  test('readWithEtag follows 301 and 302 redirects', () async {
+    final adapter = _QueueAdapter([
+      ResponseBody.fromString(
+        '',
+        301,
+        headers: {
+          'location': ['https://dav.test/dav/music/redirected.mp3'],
+        },
+      ),
+      ResponseBody.fromBytes(
+        utf8.encode('abc'),
+        200,
+        headers: {
+          'etag': ['"content"'],
+        },
+      ),
+    ]);
+    final dio = Dio()..httpClientAdapter = adapter;
+    addTearDown(dio.close);
+    final repository = WebDavRepository(
+      dio: dio,
+      baseUri: Uri.parse('https://dav.test/dav/music/'),
+    );
+    final result = await repository.readWithEtag(SyncPath.parse('song.mp3'));
+    expect(result, isNotNull);
+    final bytes = await result!.stream.expand((c) => c).toList();
+    expect(utf8.decode(bytes), 'abc');
+    expect(adapter.requests, hasLength(2));
+    expect(adapter.requests[0].options.uri.path, endsWith('/song.mp3'));
+    expect(adapter.requests[1].options.uri.path, endsWith('/redirected.mp3'));
+  });
+
+  test('headEtag follows 301 redirect', () async {
+    final adapter = _QueueAdapter([
+      ResponseBody.fromString(
+        '',
+        301,
+        headers: {
+          'location': ['https://dav.test/dav/music/redirected.mp3'],
+        },
+      ),
+      ResponseBody.fromString(
+        '',
+        200,
+        headers: {
+          'etag': ['"etag-123"'],
+        },
+      ),
+    ]);
+    final dio = Dio()..httpClientAdapter = adapter;
+    addTearDown(dio.close);
+    final repository = WebDavRepository(
+      dio: dio,
+      baseUri: Uri.parse('https://dav.test/dav/music/'),
+    );
+    final etag = await repository.headEtag(SyncPath.parse('song.mp3'));
+    expect(etag, '"etag-123"');
+    expect(adapter.requests, hasLength(2));
+  });
+
+  test('propfind follows 301 redirect', () async {
+    final adapter = _QueueAdapter([
+      ResponseBody.fromString(
+        '',
+        301,
+        headers: {
+          'location': ['https://dav.test/dav/music/album/'],
+        },
+      ),
+      ResponseBody.fromString('''
+        <D:multistatus xmlns:D="DAV:">
+          <D:response>
+            <D:href>/dav/music/album/song.mp3</D:href>
+            <D:propstat>
+              <D:prop>
+                <D:getetag>"song"</D:getetag>
+                <D:getcontentlength>3</D:getcontentlength>
+                <D:getlastmodified>Tue, 06 Oct 2026 14:30:00 GMT</D:getlastmodified>
+              </D:prop>
+              <D:status>HTTP/1.1 200 OK</D:status>
+            </D:propstat>
+          </D:response>
+        </D:multistatus>
+      ''', 207),
+    ]);
+    final dio = Dio()..httpClientAdapter = adapter;
+    addTearDown(dio.close);
+    final repository = WebDavRepository(
+      dio: dio,
+      baseUri: Uri.parse('https://dav.test/dav/music/'),
+    );
+    final resources = await repository.propfind(SyncPath.parse('album'));
+    expect(resources, hasLength(1));
+    expect(resources.single.path.value, 'album/song.mp3');
+    expect(adapter.requests, hasLength(2));
   });
 }

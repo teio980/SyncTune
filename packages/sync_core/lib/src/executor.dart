@@ -176,8 +176,12 @@ final class SyncExecutor {
           }
           final staged = recoveredStage == null
               ? await local.stage(
-                  op.path, await remote.read(op.path, token: token),
-                  expectedSha256: sourceHash, token: token)
+                  op.path,
+                  op.other?.sha256 == sourceHash
+                      ? await local.read(op.path, token: token)
+                      : await remote.read(op.path, token: token),
+                  expectedSha256: sourceHash,
+                  token: token)
               : StagedObject(
                   key: recoveredStage.stagingKey!,
                   sha256: recoveredStage.sha256!,

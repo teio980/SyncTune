@@ -21,6 +21,8 @@ String syncFailureMessage(Object error) {
   }
   if (error is WebDavHttpError) {
     return switch (error.status) {
+      301 || 302 || 303 || 307 || 308 =>
+        'The server redirected the request. Enter the final HTTPS WebDAV URL.',
       401 => 'Authentication failed. Check your username and password.',
       403 => 'Access denied. Check your account permissions for this folder.',
       404 => 'A required WebDAV file or folder was not found. Check the sync folder and retry.',
@@ -31,7 +33,7 @@ String syncFailureMessage(Object error) {
   }
   if (error is WebDavCompatibilityError) {
     if (error.message.contains('ETag')) {
-      return 'The server did not provide a strong file ETag. Safe sync is unavailable for this server.';
+      return 'The cloud file version differs between listing and download. Retry sync.';
     }
     return 'The WebDAV response or SyncTune metadata is invalid. Check the sync folder and retry.';
   }
