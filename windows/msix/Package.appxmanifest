@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10">
+  <Identity
+    Name="SyncTune.Probe"
+    Publisher="CN=SyncTune Development"
+    Version="1.0.0.9"
+    ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>SyncTune Probe</DisplayName>
+    <PublisherDisplayName>SyncTune Development</PublisherDisplayName>
+    <Description>SyncTune Windows AppContainer capability probe</Description>
+    <Logo>Assets\app_icon.png</Logo>
+  </Properties>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.19041.0"
+      MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Applications>
+    <Application
+      Id="App"
+      Executable="synctune.exe"
+      uap10:RuntimeBehavior="packagedClassicApp"
+      uap10:TrustLevel="appContainer">
+      <uap:VisualElements
+        AppListEntry="default"
+        DisplayName="SyncTune Probe"
+        Description="SyncTune Windows AppContainer capability probe"
+        BackgroundColor="#4F46E5"
+        Square150x150Logo="Assets\app_icon.png"
+        Square44x44Logo="Assets\app_icon.png" />
+    </Application>
+  </Applications>
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
+  </Capabilities>
+</Package>
