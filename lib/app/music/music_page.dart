@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../design/sync_components.dart';
 import '../design/sync_theme.dart';
 import '../localization/strings.dart';
+import '../sync/sync_gate.dart';
 import '../sync/sync_status_view_model.dart';
+import 'music_deletion.dart';
 import 'music_scan.dart';
 
 class MusicPage extends ConsumerWidget {
@@ -20,11 +22,28 @@ class MusicPage extends ConsumerWidget {
     final favorites = ref.watch(musicFavoritesProvider);
     final favoritesPort = ref.watch(musicFavoritesPortProvider);
     final favoriteMessage = ref.watch(musicFavoritesMessageProvider);
+    final deletionState = ref.watch(musicDeletionProvider);
+    final deletionPort = ref.watch(musicDeletionPortProvider);
+    final runtimeSnapshot =
+        ref.watch(syncRuntimeSnapshotProvider).asData?.value ??
+            const ForegroundRuntimeSnapshot.idle();
+
     ref.listen(musicScanProvider, (previous, next) {
       if (next.status == MusicScanStatus.ready &&
           previous?.status != MusicScanStatus.ready) {
         if (grant != null) {
           ref.read(musicFavoritesProvider.notifier).load(grant);
+        }
+      }
+    });
+
+    ref.listen(syncRuntimeSnapshotProvider, (previous, next) {
+      final prevPhase = previous?.asData?.value.phase;
+      final nextPhase = next.asData?.value.phase;
+      if (nextPhase == ForegroundRunPhase.succeeded &&
+          prevPhase != ForegroundRunPhase.succeeded) {
+        if (grant != null) {
+          ref.read(musicScanProvider.notifier).scan(grant);
         }
       }
     });
@@ -53,6 +72,7 @@ class MusicPage extends ConsumerWidget {
                   rootStatus: rootStatus,
                   scan: scan,
                   favoriteMessage: favoriteMessage,
+                  deletionState: deletionState,
                   onScan: grant == null || scan.isLoading
                       ? null
                       : () => ref.read(musicScanProvider.notifier).scan(grant),
@@ -74,6 +94,10 @@ class MusicPage extends ConsumerWidget {
               itemBuilder: (context, index) {
                 if (expanded && index == 0) return const _TrackHeader();
                 final track = scan.tracks[expanded ? index - 1 : index];
+                final canDelete = grant != null &&
+                    deletionPort != null &&
+                    !runtimeSnapshot.isRunning &&
+                    !deletionState.isDeleting;
                 return Align(
                   alignment: Alignment.topCenter,
                   child: ConstrainedBox(
@@ -91,6 +115,14 @@ class MusicPage extends ConsumerWidget {
                           : () => ref
                                 .read(musicFavoritesProvider.notifier)
                                 .toggleTrack(track, grant: grant!),
+                      canDelete: canDelete,
+                      isDeleting: deletionState.isDeleting &&
+                          deletionState.deletingPath == track.relativePath,
+                      onDelete: canDelete
+                          ? () => ref
+                                .read(musicDeletionProvider.notifier)
+                                .confirmAndDelete(context, track, grant: grant)
+                          : null,
                     ),
                   ),
                 );
@@ -108,6 +140,7 @@ class _MusicOverview extends StatelessWidget {
     required this.rootStatus,
     required this.scan,
     required this.favoriteMessage,
+    required this.deletionState,
     required this.onScan,
   });
 
@@ -115,6 +148,7 @@ class _MusicOverview extends StatelessWidget {
   final String rootStatus;
   final MusicScanState scan;
   final String? favoriteMessage;
+  final MusicDeletionState deletionState;
   final VoidCallback? onScan;
 
   @override
@@ -205,6 +239,24 @@ class _MusicOverview extends StatelessWidget {
           const SizedBox(height: SyncTuneTokens.space16),
         ],
         status,
+        if (deletionState.statusMessage != null) ...[
+          const SizedBox(height: SyncTuneTokens.space12),
+          SyncTuneStatusCard(
+            title: 'Delete song',
+            message: deletionState.statusMessage!,
+            icon: Icons.sync_problem_outlined,
+            tone: SyncTuneStatusTone.warning,
+          ),
+        ],
+        if (deletionState.errorMessage != null) ...[
+          const SizedBox(height: SyncTuneTokens.space12),
+          SyncTuneStatusCard(
+            title: 'Song deletion failed',
+            message: deletionState.errorMessage!,
+            icon: Icons.error_outline,
+            tone: SyncTuneStatusTone.error,
+          ),
+        ],
         if (favoriteMessage != null) ...[
           const SizedBox(height: SyncTuneTokens.space12),
           SyncTuneStatusCard(
@@ -235,9 +287,10 @@ class _TrackHeader extends StatelessWidget {
               style: Theme.of(context).textTheme.labelLarge,
             ),
           ),
-          const SizedBox(width: 120, child: LocalizedText('Format')),
-          const SizedBox(width: 120, child: LocalizedText('Size')),
-          const SizedBox(width: 128, child: LocalizedText('Favorite')),
+          const SizedBox(width: 100, child: LocalizedText('Format')),
+          const SizedBox(width: 100, child: LocalizedText('Size')),
+          const SizedBox(width: 64, child: LocalizedText('Favorite')),
+          const SizedBox(width: 64, child: LocalizedText('Delete')),
         ],
       ),
     );
@@ -250,12 +303,18 @@ class _TrackRow extends StatelessWidget {
     required this.expanded,
     required this.favorite,
     required this.onFavorite,
+    required this.canDelete,
+    required this.isDeleting,
+    required this.onDelete,
   });
 
   final MusicTrack track;
   final bool expanded;
   final bool favorite;
   final VoidCallback? onFavorite;
+  final bool canDelete;
+  final bool isDeleting;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -270,6 +329,18 @@ class _TrackRow extends StatelessWidget {
       onPressed: onFavorite,
       icon: Icon(favorite ? Icons.star : Icons.star_border),
     );
+    final deleteButton = IconButton(
+      tooltip: SyncTuneStrings.of(context).text(
+        canDelete ? 'Delete song' : 'Delete unavailable',
+      ),
+      onPressed: canDelete ? onDelete : null,
+      icon: isDeleting
+          ? const SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.delete_outline),
+    );
     if (!expanded) {
       return Card(
         margin: const EdgeInsets.only(bottom: SyncTuneTokens.space8),
@@ -280,7 +351,13 @@ class _TrackRow extends StatelessWidget {
           subtitle: Text(
             '${track.extension.toUpperCase()} · ${formatBytes(track.size)}',
           ),
-          trailing: star,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              star,
+              deleteButton,
+            ],
+          ),
         ),
       );
     }
@@ -299,11 +376,15 @@ class _TrackRow extends StatelessWidget {
           Expanded(
             child: Text(track.relativePath, overflow: TextOverflow.ellipsis),
           ),
-          SizedBox(width: 120, child: Text(track.extension.toUpperCase())),
-          SizedBox(width: 120, child: Text(formatBytes(track.size))),
+          SizedBox(width: 100, child: Text(track.extension.toUpperCase())),
+          SizedBox(width: 100, child: Text(formatBytes(track.size))),
           SizedBox(
-            width: 128,
+            width: 64,
             child: Align(alignment: Alignment.centerLeft, child: star),
+          ),
+          SizedBox(
+            width: 64,
+            child: Align(alignment: Alignment.centerLeft, child: deleteButton),
           ),
         ],
       ),

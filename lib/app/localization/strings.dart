@@ -38,6 +38,8 @@ class SyncTuneStrings {
     'Files processed: ': '已处理文件：',
     'Operations completed: ': '已完成操作：',
     'File data processed: ': '已处理文件数据：',
+    'Transferred data: ': '已传输数据：',
+    'Verified data: ': '已校验数据：',
     'Elapsed: ': '已用时间：',
     'Folder: ': '目录：',
     'Current task: ': '当前任务：',
@@ -73,6 +75,17 @@ class SyncTuneStrings {
     'Updating favorites': '正在同步收藏',
     'File operations complete': '文件处理完成',
     'Saving sync result': '正在保存同步结果',
+    'Scan': '扫描',
+    'Transfer': '传输',
+    'Verify': '校验',
+    'Transferring files': '正在传输文件',
+    'Verifying file integrity': '正在校验文件完整性',
+    'Scanning & planning': '正在扫描与规划',
+    'Checking file checksum (local integrity check, not re-downloading)':
+        '正在校验本地文件完整性，非重新下载',
+    'Scan music or start sync': '扫描音乐或开始同步',
+    'Sync will scan local music automatically, or you can scan first.':
+        '同步时将自动扫描本地音乐，也可以先手动扫描。',
     'Waiting for the current operation to respond…': '正在等待当前操作响应…',
     'Language': '语言',
     'App language': '应用语言',
@@ -296,6 +309,14 @@ class SyncTuneStrings {
     'failed': '失败',
     'completed': '已完成',
     'cancelled': '已取消',
+    'Delete': '删除',
+    'Delete song': '删除歌曲',
+    'Cancel': '取消',
+    'Delete unavailable': '当前无法删除',
+    'Delete local song and WebDAV copy. Other devices will delete it on their next sync.':
+        '删除本机歌曲及 WebDAV 副本，其他设备将在下次同步时删除。',
+    'Local file deleted, waiting to sync': '本机已删除，等待同步',
+    'Song deletion failed': '删除歌曲失败',
   };
 }
 

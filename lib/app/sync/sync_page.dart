@@ -31,12 +31,18 @@ class SyncPage extends ConsumerWidget {
 
     final hasCompleteScan =
         scan.status == MusicScanStatus.ready && scan.complete;
-    final blockedByScan =
-        scan.status != MusicScanStatus.ready || !scan.complete;
+    final isPartialScan =
+        scan.status == MusicScanStatus.ready && !scan.complete;
+    final isScanLoading = scan.status == MusicScanStatus.loading;
+    final isScanFailed = scan.status == MusicScanStatus.failed;
+    final isScanIdle = scan.status == MusicScanStatus.idle;
+
+    // Scan only blocks if it is actively running, failed, or was an incomplete partial scan.
+    final blockedByScan = isPartialScan || isScanFailed || isScanLoading;
     final canRun =
         grant != null &&
         rootStatus == 'ready' &&
-        hasCompleteScan &&
+        !blockedByScan &&
         gate.canRun &&
         !gate.isBusy &&
         !runtimeSnapshot.isRunning &&
@@ -45,18 +51,33 @@ class SyncPage extends ConsumerWidget {
         controls != null &&
         grant != null &&
         rootStatus == 'ready' &&
-        hasCompleteScan &&
+        !blockedByScan &&
         !gate.isBusy &&
         runtimeSnapshot.canRetry;
 
+    // Automatically refresh music library when sync finishes.
+    ref.listen(syncRuntimeSnapshotProvider, (previous, next) {
+      final prevPhase = previous?.asData?.value.phase;
+      final nextPhase = next.asData?.value.phase;
+      if (nextPhase == ForegroundRunPhase.succeeded &&
+          prevPhase != ForegroundRunPhase.succeeded) {
+        if (grant != null) {
+          ref.read(musicScanProvider.notifier).scan(grant);
+        }
+      }
+    });
+
     final status = _statusCard(
       context,
+      ref: ref,
       grant: grant,
       rootStatus: rootStatus,
       scan: scan,
       gate: gate,
       runtimeSnapshot: runtimeSnapshot,
       blockedByScan: blockedByScan,
+      isPartialScan: isPartialScan,
+      isScanIdle: isScanIdle,
       onRefreshGate: runtime == null || runtimeSnapshot.isRunning
           ? null
           : () => ref.read(syncGateProvider.notifier).refresh(runtime),
@@ -91,9 +112,23 @@ class SyncPage extends ConsumerWidget {
                     : runtimeSnapshot.isRunning && controls != null
                     ? controls.cancel
                     : canRetry
-                    ? () => ref.read(syncGateProvider.notifier).retry(runtime)
+                    ? () {
+                        if (isScanIdle && grant != null) {
+                          unawaited(
+                            ref.read(musicScanProvider.notifier).scan(grant),
+                          );
+                        }
+                        ref.read(syncGateProvider.notifier).retry(runtime);
+                      }
                     : canRun
-                    ? () => ref.read(syncGateProvider.notifier).run(runtime)
+                    ? () {
+                        if (isScanIdle && grant != null) {
+                          unawaited(
+                            ref.read(musicScanProvider.notifier).scan(grant),
+                          );
+                        }
+                        ref.read(syncGateProvider.notifier).run(runtime);
+                      }
                     : null,
                 icon: runtimeSnapshot.isRunning
                     ? const SizedBox.square(
@@ -139,12 +174,15 @@ class SyncPage extends ConsumerWidget {
 
   Widget _statusCard(
     BuildContext context, {
+    required WidgetRef ref,
     required RootGrant? grant,
     required String rootStatus,
     required MusicScanState scan,
     required SyncGateState gate,
     required ForegroundRuntimeSnapshot runtimeSnapshot,
     required bool blockedByScan,
+    required bool isPartialScan,
+    required bool isScanIdle,
     required VoidCallback? onRefreshGate,
   }) {
     if (runtimeSnapshot.isRunning) {
@@ -180,23 +218,35 @@ class SyncPage extends ConsumerWidget {
       );
     }
     if (scan.status == MusicScanStatus.failed) {
-      return const SyncTuneStatusCard(
+      return SyncTuneStatusCard(
         title: 'Scan status unavailable',
         message: 'Rescan on Music to confirm folder access.',
         icon: Icons.error_outline,
         tone: SyncTuneStatusTone.error,
+        action: grant == null
+            ? null
+            : OutlinedButton.icon(
+                onPressed: () =>
+                    ref.read(musicScanProvider.notifier).scan(grant),
+                icon: const Icon(Icons.search),
+                label: const LocalizedText('Scan music'),
+              ),
       );
     }
-    if (blockedByScan) {
+    if (isPartialScan) {
       return SyncTuneStatusCard(
-        title: scan.status == MusicScanStatus.ready && !scan.complete
-            ? 'Incomplete scan'
-            : 'Scan required',
-        message: scan.status == MusicScanStatus.ready && !scan.complete
-            ? 'Partial scans cannot schedule deletions. Run a full scan.'
-            : 'Scan music before syncing.',
+        title: 'Incomplete scan',
+        message: 'Partial scans cannot schedule deletions. Run a full scan.',
         icon: Icons.warning_amber,
         tone: SyncTuneStatusTone.warning,
+        action: grant == null
+            ? null
+            : OutlinedButton.icon(
+                onPressed: () =>
+                    ref.read(musicScanProvider.notifier).scan(grant),
+                icon: const Icon(Icons.search),
+                label: const LocalizedText('Scan music'),
+              ),
       );
     }
     if (runtimeSnapshot.phase == ForegroundRunPhase.failed ||
@@ -234,6 +284,22 @@ class SyncPage extends ConsumerWidget {
         title: showRuntimeReason ? 'Sync blocked' : gate.title,
         message: showRuntimeReason ? runtimeSnapshot.message : gate.message,
         icon: Icons.lock_outline,
+      );
+    }
+    if (isScanIdle && gate.canRun && !runtimeSnapshot.isRunning) {
+      return SyncTuneStatusCard(
+        title: 'Ready to sync',
+        message:
+            'Sync will scan local music automatically, or you can scan first.',
+        icon: Icons.sync,
+        action: grant == null
+            ? null
+            : OutlinedButton.icon(
+                onPressed: () =>
+                    ref.read(musicScanProvider.notifier).scan(grant),
+                icon: const Icon(Icons.search),
+                label: const LocalizedText('Scan music'),
+              ),
       );
     }
     return SyncTuneStatusCard(
@@ -287,6 +353,46 @@ class _SyncRunDetailsState extends State<_SyncRunDetails> {
       ? '${(bytes / 1024).toStringAsFixed(1)} KB'
       : '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 
+  Widget _buildStepBadge(
+    BuildContext context, {
+    required String label,
+    required bool isDone,
+    required bool isActive,
+  }) {
+    final colors = Theme.of(context).colorScheme;
+    final color = isDone
+        ? colors.primary
+        : isActive
+            ? colors.tertiary
+            : colors.outlineVariant;
+    final textColor = isDone || isActive
+        ? colors.onSurface
+        : colors.onSurfaceVariant;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          isDone
+              ? Icons.check_circle
+              : isActive
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+          size: 14,
+          color: color,
+        ),
+        const SizedBox(width: 4),
+        LocalizedText(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+            color: textColor,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final snapshot = widget.snapshot;
@@ -307,6 +413,25 @@ class _SyncRunDetailsState extends State<_SyncRunDetails> {
         : totalItems != null && totalItems > 0
         ? (progress!.completedItems / totalItems).clamp(0.0, 1.0)
         : null;
+
+    final stage = progress?.stage ?? snapshot.message;
+    final isVerifying = stage.contains('Verifying') ||
+        stage.contains('Hashing') ||
+        stage == 'Saving sync result';
+    final isTransferring = stage == 'Downloading' ||
+        stage == 'Uploading' ||
+        stage == 'Deleting local file' ||
+        stage == 'Deleting cloud file' ||
+        stage == 'Preserving conflicting files' ||
+        stage == 'Updating favorites' ||
+        stage == 'File operations complete';
+
+    final stepIndex = isVerifying
+        ? 3
+        : isTransferring
+            ? 2
+            : 1;
+
     return SyncTuneStatusCard(
       title: snapshot.phase == ForegroundRunPhase.cancelling
           ? 'Canceling sync'
@@ -318,6 +443,42 @@ class _SyncRunDetailsState extends State<_SyncRunDetails> {
       action: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _buildStepBadge(
+                context,
+                label: 'Scan',
+                isDone: stepIndex > 1,
+                isActive: stepIndex == 1,
+              ),
+              Icon(
+                Icons.chevron_right,
+                size: 14,
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+              _buildStepBadge(
+                context,
+                label: 'Transfer',
+                isDone: stepIndex > 2,
+                isActive: stepIndex == 2,
+              ),
+              Icon(
+                Icons.chevron_right,
+                size: 14,
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+              _buildStepBadge(
+                context,
+                label: 'Verify',
+                isDone: false,
+                isActive: stepIndex == 3,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           if (progress?.path != null) ...[
             Text(progress!.path!, key: const ValueKey('sync-current-file')),
             const SizedBox(height: 8),
@@ -330,7 +491,17 @@ class _SyncRunDetailsState extends State<_SyncRunDetails> {
             ),
           if (totalBytes != null)
             LocalizedText(
-              'File data processed: ${_bytes(progress!.completedBytes)} / ${_bytes(totalBytes)}',
+              isVerifying
+                  ? 'Verified data: ${_bytes(progress!.completedBytes)} / ${_bytes(totalBytes)}'
+                  : 'File data processed: ${_bytes(progress!.completedBytes)} / ${_bytes(totalBytes)}',
+            ),
+          if (isVerifying)
+            const Padding(
+              padding: EdgeInsets.only(top: 2, bottom: 2),
+              child: LocalizedText(
+                'Checking file checksum (local integrity check, not re-downloading)',
+                style: TextStyle(fontSize: 12),
+              ),
             ),
           LocalizedText(
             'Elapsed: ${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}',
