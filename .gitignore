@@ -55,6 +55,7 @@ keystore.properties
 
 # Symbolication related
 app.*.symbols
+*.obj
 
 # Obfuscation related
 app.*.map.json
