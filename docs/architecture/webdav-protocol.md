@@ -18,8 +18,9 @@ The snapshot adapter requires the entry descriptor for every managed music
 file. It rejects an unpaired live descriptor/content object, preserves a
 descriptor tombstone after content deletion, and reads the independent
 favorite document before exposing the remote snapshot. Ordinary WebDAV files
-without SyncTune metadata are reported as incompatible until an explicit
-identity adoption flow is invoked. Adoption checks the existing resource
+without SyncTune metadata require identity adoption. A manual Sync or Retry
+request performs adoption and continues the same sync run; automatic scans
+offer an import action without writing descriptors. Adoption checks the existing resource
 size/strong ETag and writes the descriptor with create-only metadata CAS; it
 never happens as a side effect of a background scan.
 
@@ -31,7 +32,12 @@ root, verifies each unpaired song with conditional streaming GET and SHA-256,
 and creates its identity descriptor with `If-None-Match: *`. It reads song
 content without replacing or deleting it. A retry preserves existing identities
 and continues with the remaining files; cancellation or changed bytes stops the
-import. After import, the ordinary coordinator performs synchronization and
+import. Retry resumes a failed import rather than switching to an ordinary
+scan that would fail on the remaining unpaired files. Each song is hashed once
+during import, then its PROPFIND ETag/length are rechecked before descriptor
+creation. GET requests explicitly use `Accept-Encoding: identity` so content
+negotiation does not select a compressed representation with a different ETag.
+After import, the ordinary coordinator performs synchronization and
 confirms the baseline through both post-scans.
 
 Before a managed file enters a remote snapshot, the adapter performs a

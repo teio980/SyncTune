@@ -245,6 +245,7 @@ final class ForegroundSyncRuntime
   Future<void>? _disposeFuture;
   int _epoch = 0;
   int _sequence = 0;
+  String? _pendingImportTarget;
 
   @override
   ForegroundRuntimeSnapshot get snapshot => _snapshot;
@@ -328,7 +329,12 @@ final class ForegroundSyncRuntime
   @override
   Future<void> retry() {
     if (_disposed || !_foreground) return _cancelledRequest();
-    return _request('Retry');
+    return _request(
+      _pendingImportTarget == targetPort.current?.identity ||
+              _snapshot.requiresRemoteImport
+          ? 'Import cloud music'
+          : 'Retry',
+    );
   }
 
   @override
@@ -607,11 +613,13 @@ final class ForegroundSyncRuntime
         if (importer is! ExistingRemoteMusicImporter) {
           throw const SyncRuntimeNotReady('Cloud music import is unavailable.');
         }
+        _pendingImportTarget = target.identity;
         await (importer as ExistingRemoteMusicImporter).importCloudMusic(
           target,
           token: source,
         );
         _ensureCurrent(epoch, target, source);
+        _pendingImportTarget = null;
         _publish(
           ForegroundRuntimeSnapshot(
             phase: ForegroundRunPhase.running,
@@ -621,11 +629,27 @@ final class ForegroundSyncRuntime
           ),
         );
       }
-      final result = await runner.run(
-        target,
-        runToken: runToken,
-        token: source,
-      );
+      SyncRunResult result;
+      try {
+        result = await runner.run(target, runToken: runToken, token: source);
+      } catch (error) {
+        // Pressing Sync authorizes importing the selected cloud folder too.
+        // Startup and scheduled scans remain read-only until a manual request.
+        if (!needsRemoteMusicImport(error) ||
+            (reason != 'Manual' && reason != 'Retry') ||
+            runner is! ExistingRemoteMusicImporter) {
+          rethrow;
+        }
+        _ensureCurrent(epoch, target, source);
+        _pendingImportTarget = target.identity;
+        await (runner as ExistingRemoteMusicImporter).importCloudMusic(
+          target,
+          token: source,
+        );
+        _ensureCurrent(epoch, target, source);
+        _pendingImportTarget = null;
+        result = await runner.run(target, runToken: runToken, token: source);
+      }
       _ensureCurrent(epoch, target, source);
       result.requireConfirmed();
       _publish(
@@ -671,7 +695,9 @@ final class ForegroundSyncRuntime
           ForegroundRuntimeSnapshot(
             phase: ForegroundRunPhase.failed,
             message: syncFailureMessage(error),
-            requiresRemoteImport: needsRemoteMusicImport(error),
+            requiresRemoteImport:
+                needsRemoteMusicImport(error) ||
+                _pendingImportTarget == target.identity,
             runToken: runToken,
             lastStartedAtUtc: startedAt,
             progress: source.progress,

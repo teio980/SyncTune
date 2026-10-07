@@ -30,6 +30,20 @@ final class RemoteMusicImportRequired extends WebDavCompatibilityError {
   final SyncPath path;
 }
 
+enum RemoteFileMismatch { etag, length, hash }
+
+final class RemoteFileVerificationFailed extends NeedsRescan {
+  const RemoteFileVerificationFailed(
+    this.mismatch, {
+    this.expected,
+    this.actual,
+  }) : super('remote file verification failed');
+
+  final RemoteFileMismatch mismatch;
+  final int? expected;
+  final int? actual;
+}
+
 final class WebDavResource {
   const WebDavResource({
     required this.path,
@@ -979,6 +993,52 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     );
   }
 
+  /// Hash the existing song once, then recheck its DAV version before creating
+  /// the descriptor. Import never writes song bytes.
+  Future<void> importExistingFile(
+    WebDavResource resource, {
+    required String id,
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    final content = await readWithEtag(
+      resource.path,
+      token: token,
+      ifMatch: resource.etag,
+    );
+    if (content == null) throw const NeedsRescan('remote content disappeared');
+    final actual = await _hashReadResult(content, token);
+    if (content.etag != resource.etag) {
+      throw const RemoteFileVerificationFailed(RemoteFileMismatch.etag);
+    }
+    if (actual.length != resource.size) {
+      throw RemoteFileVerificationFailed(
+        RemoteFileMismatch.length,
+        expected: resource.size,
+        actual: actual.length,
+      );
+    }
+    final current = await propfind(resource.path, token: token);
+    if (current.length != 1 ||
+        current.single.path != resource.path ||
+        current.single.isCollection ||
+        current.single.etag != resource.etag ||
+        current.single.size != resource.size) {
+      throw const RemoteFileVerificationFailed(RemoteFileMismatch.etag);
+    }
+    await putMetadata(
+      resource.path,
+      SyncEntry.file(
+        id: id,
+        path: resource.path,
+        size: actual.length,
+        modifiedAtUtc: resource.modifiedAtUtc,
+        sha256: actual.sha256,
+      ),
+      condition: const CreateOnly(),
+      token: token,
+    );
+  }
+
   @override
   Future<Stream<List<int>>> read(
     SyncPath path, {
@@ -1005,7 +1065,9 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
         _resourceUri(path),
         options: Options(
           responseType: ResponseType.stream,
-          headers: ifMatch == null ? null : {'If-Match': ifMatch},
+          // DAV metadata describes the stored representation. Compression can
+          // select a different ETag for GET even when the song is unchanged.
+          headers: {'Accept-Encoding': 'identity', 'If-Match': ?ifMatch},
           followRedirects: false,
           maxRedirects: 0,
           validateStatus: (_) => true,
@@ -1531,30 +1593,13 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
         allowMissing: true,
       );
       if (existing != null) continue;
-      final content = await _repository.readWithEtag(
-        resource.path,
-        token: token,
-        ifMatch: resource.etag,
-      );
-      if (content == null) {
-        throw const NeedsRescan('remote content disappeared');
-      }
-      final actual = await _hashReadResult(content, token);
-      if (content.etag != resource.etag || actual.length != resource.size) {
-        throw const NeedsRescan('remote content changed during import');
-      }
       final identity = List<int>.generate(
         16,
         (_) => random.nextInt(256),
       ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
-      await _repository.adoptExistingFile(
-        SyncEntry.file(
-          id: 'import-$identity',
-          path: resource.path,
-          size: actual.length,
-          modifiedAtUtc: resource.modifiedAtUtc,
-          sha256: actual.sha256,
-        ),
+      await _repository.importExistingFile(
+        resource,
+        id: 'import-$identity',
         token: token,
       );
     }
@@ -1647,15 +1692,17 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
       }
       final actual = await _hashReadResult(content, token);
       if (content.etag != resource.etag) {
-        throw NeedsRescan(
-          'Content ETag changed while reading ${resource.path}.',
+        throw const RemoteFileVerificationFailed(RemoteFileMismatch.etag);
+      }
+      if (actual.length != metadata.entry.size) {
+        throw RemoteFileVerificationFailed(
+          RemoteFileMismatch.length,
+          expected: metadata.entry.size,
+          actual: actual.length,
         );
       }
-      if (actual.length != metadata.entry.size ||
-          actual.sha256 != metadata.entry.sha256) {
-        throw NeedsRescan(
-          'Content hash disagrees with identity metadata for ${resource.path}.',
-        );
+      if (actual.sha256 != metadata.entry.sha256) {
+        throw const RemoteFileVerificationFailed(RemoteFileMismatch.hash);
       }
       entries[resource.path] = RemoteObject(
         entry: metadata.entry,

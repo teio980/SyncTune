@@ -91,6 +91,42 @@ void main() {
   });
 
   test(
+    'manual sync imports existing songs and completes in one request',
+    () async {
+      final runner = _ImportRunner();
+      final runtime = ForegroundSyncRuntime(
+        targetPort: FakeTargetPort(_target('g1')),
+        runner: runner,
+      );
+      addTearDown(runtime.disposeAndWait);
+      await runtime.requestManual();
+      expect(runner.imports, 1);
+      expect(runner.runs, 2);
+      expect(runtime.snapshot.phase, ForegroundRunPhase.succeeded);
+    },
+  );
+
+  test('retry resumes a failed import before running sync', () async {
+    final runner = _ImportRunner()
+      ..importError = const RemoteFileVerificationFailed(
+        RemoteFileMismatch.etag,
+      );
+    final runtime = ForegroundSyncRuntime(
+      targetPort: FakeTargetPort(_target('g1')),
+      runner: runner,
+    );
+    addTearDown(runtime.disposeAndWait);
+    await expectLater(runtime.importCloudMusic(), throwsA(isA<NeedsRescan>()));
+    expect(runtime.snapshot.requiresRemoteImport, isTrue);
+    expect(runner.runs, 0);
+    runner.importError = null;
+    await runtime.retry();
+    expect(runner.imports, 2);
+    expect(runner.runs, 1);
+    expect(runtime.snapshot.phase, ForegroundRunPhase.succeeded);
+  });
+
+  test(
     'starts once and schedules the next run after fifteen minutes',
     () async {
       final target = FakeTargetPort(
@@ -391,6 +427,7 @@ final class _ImportRunner
   int runs = 0;
   bool imported = false;
   Completer<void>? pendingImport;
+  Object? importError;
 
   @override
   Future<SyncGateState> check(
@@ -408,6 +445,7 @@ final class _ImportRunner
     required CancellationToken token,
   }) async {
     imports++;
+    if (importError != null) throw importError!;
     await pendingImport?.future;
     token.throwIfCancelled();
     imported = true;

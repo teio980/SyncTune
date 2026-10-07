@@ -46,6 +46,7 @@ void main() {
       expect(put.uri.path, startsWith('/dav/.synctune/entries/'));
       expect(put.headers['If-None-Match'], '*');
       expect(adapter.requests.where((r) => r.method == 'DELETE'), isEmpty);
+      expect(adapter.songReads, 1);
       expect(
         adapter.requests
             .where(
@@ -91,16 +92,61 @@ void main() {
     expect(adapter.requests.where((r) => r.method == 'PUT'), isEmpty);
   });
 
+  test('content changes after hashing stop metadata creation', () async {
+    adapter.changeOnRecheck = true;
+    await expectLater(
+      provider.importExistingMusic(),
+      throwsA(isA<NeedsRescan>()),
+    );
+    expect(adapter.descriptors, isEmpty);
+    expect(adapter.requests.where((r) => r.method == 'PUT'), isEmpty);
+  });
+
   test(
-    'content changes during adoption verification stop metadata creation',
+    'downloads use the stored representation rather than a compressed ETag',
     () async {
-      adapter.changeSecondRead = true;
+      adapter.compressionVariant = true;
+      await provider.importExistingMusic();
+      final snapshot = await provider.capture(_root);
+      expect(snapshot.complete, isTrue);
+      expect(snapshot.entries.values.single.entry.sha256, _hash);
+      expect(
+        adapter.requests
+            .where((r) => r.method == 'GET')
+            .every((r) => r.headers['Accept-Encoding'] == 'identity'),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'Chinese song names with spaces and brackets import and rescan',
+    () async {
+      const name =
+          '陆虎 Lu Hu《雪落下的声音》【延禧攻略 Story of Yanxi Palace OST電視劇片尾曲】Of.mp3';
+      adapter.songPath = '/dav/album/$name';
+      await provider.importExistingMusic();
+      final snapshot = await provider.capture(_root);
+      expect(snapshot.entries.values.single.entry.path.value, 'album/$name');
+      expect(snapshot.entries.values.single.entry.sha256, _hash);
+      expect(adapter.descriptors, hasLength(1));
+    },
+  );
+
+  test(
+    'truncated song reports byte counts and creates no descriptor',
+    () async {
+      adapter.truncateSong = true;
       await expectLater(
         provider.importExistingMusic(),
-        throwsA(isA<NeedsRescan>()),
+        throwsA(
+          isA<RemoteFileVerificationFailed>()
+              .having((e) => e.mismatch, 'mismatch', RemoteFileMismatch.length)
+              .having((e) => e.expected, 'expected', 3)
+              .having((e) => e.actual, 'actual', 2),
+        ),
       );
       expect(adapter.descriptors, isEmpty);
-      expect(adapter.requests.where((r) => r.method == 'PUT'), isEmpty);
     },
   );
 
@@ -168,6 +214,7 @@ String _response(String href, String props) =>
     '''
 <D:response><D:href>$href</D:href><D:propstat><D:prop>$props</D:prop>
 <D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>''';
+String _href(String path) => path.split('/').map(Uri.encodeComponent).join('/');
 String _collection(String href) =>
     _response(href, '<D:resourcetype><D:collection/></D:resourcetype>');
 String _file(String href, int length, String etag) => _response(href, '''
@@ -181,7 +228,10 @@ final class _Dav implements HttpClientAdapter {
   final descriptors = <String, String>{};
   final directories = <String>{'/dav/', '/dav/album/'};
   String songEtag = '"song"';
-  bool changeSecondRead = false;
+  String songPath = '/dav/album/song.mp3';
+  bool changeOnRecheck = false;
+  bool compressionVariant = false;
+  bool truncateSong = false;
   bool rejectCreate = false;
   bool includeSecondSong = false;
   bool rejectSecondCreate = false;
@@ -194,7 +244,7 @@ final class _Dav implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     requests.add(options);
-    final path = options.uri.path;
+    final path = '/${options.uri.pathSegments.join('/')}';
     if (options.method == 'MKCOL') {
       final directory = path.endsWith('/') ? path : '$path/';
       return ResponseBody.fromString(
@@ -221,13 +271,18 @@ final class _Dav implements HttpClientAdapter {
       );
     }
     if (options.method == 'GET') {
-      if (path == '/dav/album/song.mp3' || path == '/dav/album/second.mp3') {
+      if (path == songPath || path == '/dav/album/second.mp3') {
         songReads++;
         return ResponseBody.fromString(
-          changeSecondRead && songReads > 1 ? 'xyz' : 'abc',
+          truncateSong ? 'ab' : 'abc',
           200,
           headers: {
-            'etag': [songEtag],
+            'etag': [
+              compressionVariant &&
+                      options.headers['Accept-Encoding'] != 'identity'
+                  ? '"song-gzip"'
+                  : songEtag,
+            ],
           },
         );
       }
@@ -243,9 +298,11 @@ final class _Dav implements HttpClientAdapter {
       );
     }
     if (options.method == 'PROPFIND') {
-      if (path == '/dav/album/song.mp3' || path == '/dav/album/second.mp3') {
+      if (path == songPath || path == '/dav/album/second.mp3') {
         return ResponseBody.fromString(
-          _multistatus([_file(path, 3, '"song"')]),
+          _multistatus([
+            _file(_href(path), 3, changeOnRecheck ? '"changed"' : '"song"'),
+          ]),
           207,
         );
       }
@@ -264,7 +321,7 @@ final class _Dav implements HttpClientAdapter {
         }
       }
       if (directory == '/dav/album/') {
-        resources.add(_file('/dav/album/song.mp3', 3, '"song"'));
+        resources.add(_file(_href(songPath), 3, '"song"'));
         if (includeSecondSong) {
           resources.add(_file('/dav/album/second.mp3', 3, '"song"'));
         }
@@ -273,11 +330,7 @@ final class _Dav implements HttpClientAdapter {
         if (entry.key.startsWith(directory) &&
             !entry.key.substring(directory.length).contains('/')) {
           resources.add(
-            _file(
-              Uri(path: entry.key).toString(),
-              utf8.encode(entry.value).length,
-              '"meta"',
-            ),
+            _file(_href(entry.key), utf8.encode(entry.value).length, '"meta"'),
           );
         }
       }

@@ -1,5 +1,11 @@
 /// Connection-check copy is kept separate from the main app catalog.
 const webDavChinese = <String, String>{
+  'The cloud file version differs between listing and download. Retry sync.':
+      '云端列表与下载返回的文件版本不一致，请重试同步。',
+  'The cloud download is incomplete.': '云端文件下载不完整。',
+  'Retry sync.': '请重试同步。',
+  'The cloud file content differs from its saved sync record. Retry sync.':
+      '云端文件内容与已保存的同步记录不一致，请重试同步。',
   'WebDAV request failed.': 'WebDAV 请求失败。',
   'Try again later.': '请稍后重试。',
   'Import cloud music': '导入云端已有音乐',

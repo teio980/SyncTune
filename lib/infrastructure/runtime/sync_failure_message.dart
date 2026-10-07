@@ -8,6 +8,14 @@ import '../platform/broker_local_object_store.dart';
 
 /// App-owned diagnostic copy only; raw transport exceptions may carry secrets.
 String syncFailureMessage(Object error) {
+  if (error is RemoteFileVerificationFailed) {
+    return switch (error.mismatch) {
+      RemoteFileMismatch.etag => 'The cloud file version differs between listing and download. Retry sync.',
+      RemoteFileMismatch.length =>
+        'The cloud download is incomplete.\nExpected bytes: ${error.expected}\nReceived bytes: ${error.actual}\nRetry sync.',
+      RemoteFileMismatch.hash => 'The cloud file content differs from its saved sync record. Retry sync.',
+    };
+  }
   if (error is RemoteMusicImportRequired) {
     return 'Existing cloud music needs to be imported into SyncTune. Tap Import cloud music, then sync again.';
   }

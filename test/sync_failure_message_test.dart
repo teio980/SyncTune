@@ -7,6 +7,33 @@ import 'package:synctune/infrastructure/runtime/sync_failure_message.dart';
 import 'package:synctune_sync_core/synctune_sync_core.dart';
 
 void main() {
+  test('remote file failures distinguish version, truncation and hash', () {
+    expect(
+      syncFailureMessage(
+        const RemoteFileVerificationFailed(RemoteFileMismatch.etag),
+      ),
+      contains('version'),
+    );
+    final message = syncFailureMessage(
+      const RemoteFileVerificationFailed(
+        RemoteFileMismatch.length,
+        expected: 3000,
+        actual: 1200,
+      ),
+    );
+    expect(message, contains('Expected bytes: 3000'));
+    expect(message, contains('Received bytes: 1200'));
+    expect(
+      const SyncTuneStrings(Locale('zh')).text(message),
+      contains('已接收字节数：1200'),
+    );
+    expect(
+      syncFailureMessage(
+        const RemoteFileVerificationFailed(RemoteFileMismatch.hash),
+      ),
+      contains('saved sync record'),
+    );
+  });
   test('missing remote identity is distinct from an unreachable server', () {
     final error = RemoteMusicImportRequired(SyncPath.parse('song.mp3'));
     expect(needsRemoteMusicImport(error), isTrue);

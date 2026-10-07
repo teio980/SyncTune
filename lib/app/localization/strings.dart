@@ -33,6 +33,8 @@ class SyncTuneStrings {
   }
 
   static const prefixes = {
+    'Expected bytes: ': '应接收字节数：',
+    'Received bytes: ': '已接收字节数：',
     'Files processed: ': '已处理文件：',
     'Operations completed: ': '已完成操作：',
     'File data processed: ': '已处理文件数据：',
