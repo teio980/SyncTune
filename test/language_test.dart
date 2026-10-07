@@ -92,17 +92,15 @@ void main() {
     ]);
     expect(tester.takeException(), isNull);
   });
-  test(
-    'Simplified Chinese is the default and unknown saved codes fall back to it',
-    () {
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
-      expect(container.read(languageProvider).language, AppLanguage.chinese);
-      expect(AppLanguage.fromCode('fr'), AppLanguage.chinese);
-      expect(AppLanguage.fromCode(null), AppLanguage.chinese);
-      expect(AppLanguage.fromCode('en'), AppLanguage.english);
-    },
-  );
+  test('English is the default and unknown saved codes fall back to it', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    expect(container.read(languageProvider).language, AppLanguage.english);
+    expect(AppLanguage.fromCode('fr'), AppLanguage.english);
+    expect(AppLanguage.fromCode(null), AppLanguage.english);
+    expect(AppLanguage.fromCode('en'), AppLanguage.english);
+    expect(AppLanguage.fromCode('zh'), AppLanguage.chinese);
+  });
   test('a late load cannot overwrite a selection and writes preserve selection order', () async {
     final port = _LanguagePort()
       ..pendingLoad = Completer<AppLanguage>()

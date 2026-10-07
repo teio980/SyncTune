@@ -24,17 +24,17 @@ void main() {
   });
 
   testWidgets(
-    'default shell exposes Chinese modules and blocks unverified sync',
+    'default shell exposes English modules and blocks unverified sync',
     (WidgetTester tester) async {
       await tester.pumpWidget(const ProviderScope(child: SyncTuneShell()));
 
-      expect(find.text('音乐'), findsWidgets);
-      expect(find.text('同步'), findsWidgets);
-      expect(find.text('设置'), findsWidgets);
+      expect(find.text('Music'), findsWidgets);
+      expect(find.text('Sync'), findsWidgets);
+      expect(find.text('Settings'), findsWidgets);
       expect(
         Localizations.localeOf(tester.element(find.byType(Scaffold).first))
             .languageCode,
-        'zh',
+        'en',
       );
       await tester.tap(find.byIcon(Icons.sync_outlined));
       await tester.pump();
@@ -61,7 +61,7 @@ void main() {
     expect(find.byType(NavigationBar), findsOneWidget);
     await tester.tap(find.byIcon(Icons.settings_outlined));
     await tester.pump();
-    await tester.tap(find.text('选择音乐根目录'));
+    await tester.tap(find.text('Choose music root folder'));
     await tester.pump();
     await tester.tap(find.byIcon(Icons.sync_outlined));
     await tester.pump();

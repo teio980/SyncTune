@@ -10,7 +10,7 @@ enum AppLanguage {
   Locale get locale => Locale(code);
 
   static AppLanguage fromCode(String? code) =>
-      code == 'en' ? AppLanguage.english : AppLanguage.chinese;
+      code == 'zh' ? AppLanguage.chinese : AppLanguage.english;
 }
 
 abstract interface class LanguagePreferencePort {
@@ -38,7 +38,7 @@ final class LanguageViewModel extends Notifier<LanguageState> {
     ref.onDispose(() => _disposed = true);
     final port = ref.read(languagePreferencePortProvider);
     if (port != null) _load(port);
-    return const LanguageState(AppLanguage.chinese);
+    return const LanguageState(AppLanguage.english);
   }
 
   Future<void> _load(LanguagePreferencePort port) async {
@@ -47,7 +47,7 @@ final class LanguageViewModel extends Notifier<LanguageState> {
       final language = await port.load();
       if (!_disposed && revision == _revision) state = LanguageState(language);
     } catch (_) {
-      // Keep Simplified Chinese if preference storage cannot be read.
+      // Keep English if preference storage cannot be read.
     }
   }
 

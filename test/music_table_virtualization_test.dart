@@ -75,10 +75,10 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('文件'), findsOneWidget);
-    expect(find.text('格式'), findsOneWidget);
-    expect(find.text('大小'), findsOneWidget);
-    expect(find.text('收藏'), findsOneWidget);
+    expect(find.text('File'), findsOneWidget);
+    expect(find.text('Format'), findsOneWidget);
+    expect(find.text('Size'), findsOneWidget);
+    expect(find.text('Favorite'), findsOneWidget);
     expect(find.text('album/track-0.mp3'), findsOneWidget);
     expect(find.text('album/track-499.mp3'), findsNothing);
 
@@ -117,7 +117,7 @@ void main() {
           .first,
     );
     expect(favorite.onPressed, isNull);
-    expect(favorite.tooltip, '收藏服务尚未连接');
+    expect(favorite.tooltip, 'Favorites service disconnected');
     await tester.binding.setSurfaceSize(null);
   });
 

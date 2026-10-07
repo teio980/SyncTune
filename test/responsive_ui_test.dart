@@ -48,7 +48,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('本地服务初始化未完成'), findsOneWidget);
+    expect(find.text('Local services could not initialize'), findsOneWidget);
     expect(
       find.text('Local data service initialization failed'),
       findsOneWidget,

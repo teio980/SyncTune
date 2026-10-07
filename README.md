@@ -158,7 +158,7 @@ The formal runtime no longer requires the Windows-only persisted diagnostic evid
 
 Local mutations now use the conservative recovery contract exposed by both brokers: verify the expected SHA-256, persist a staged journal record, move the old object into the root-scoped `.synctune-local` area under a stable operation key, publish and hash-check the new object, and keep a recoverable delete backup. A restart consumes unfinished local journal records before scanning; unknown bytes or simultaneous backup and target files remain visible and return `NeedsRescan`. The capability names are `verified_create_recovery`, `verified_backup_replace`, and `verified_backup_delete`; they do not claim provider-level atomic CAS.
 
-New installs default to Simplified Chinese while an explicitly saved English choice remains available. The final artifacts for this round are built but were not installed, launched, or tested against a user's WebDAV service.
+New installs default to English, with Simplified Chinese available in Settings. An explicitly saved language choice is restored on the next launch. The final artifacts for this round are built but were not installed, launched, or tested against a user's WebDAV service.
 
 ## Final static delivery (2026-10-07)
 

@@ -25,18 +25,21 @@ void main() {
     );
     await tester.tap(find.byIcon(Icons.settings_outlined));
     await tester.pump();
-    await tester.tap(find.text('选择音乐根目录'));
+    await tester.tap(find.text('Choose music root folder'));
     await tester.pump();
 
-    await tester.tap(find.text('撤销目录授权'));
+    await tester.tap(find.text('Revoke folder access'));
     await tester.pump();
-    expect(find.text('授权撤销失败，当前授权仍有效。'), findsOneWidget);
-    expect(find.text('音乐根目录已授权'), findsOneWidget);
+    expect(
+      find.text('Could not revoke access. Authorization remains active.'),
+      findsOneWidget,
+    );
+    expect(find.text('Music root folder authorized'), findsOneWidget);
 
     success = true;
-    await tester.tap(find.text('撤销目录授权'));
+    await tester.tap(find.text('Revoke folder access'));
     await tester.pump();
-    expect(find.text('音乐根目录不可用'), findsOneWidget);
+    expect(find.text('Music root folder unavailable'), findsOneWidget);
   });
 
   testWidgets('revoke stays disabled when the platform has no revoker', (
@@ -47,12 +50,15 @@ void main() {
     );
     await tester.tap(find.byIcon(Icons.settings_outlined));
     await tester.pump();
-    await tester.tap(find.text('选择音乐根目录'));
+    await tester.tap(find.text('Choose music root folder'));
     await tester.pump();
 
-    expect(find.text('当前平台不支持撤销授权。'), findsOneWidget);
+    expect(
+      find.text('Revocation unavailable on this platform.'),
+      findsOneWidget,
+    );
     final revoke = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, '撤销目录授权'),
+      find.widgetWithText(OutlinedButton, 'Revoke folder access'),
     );
     expect(revoke.onPressed, isNull);
   });
