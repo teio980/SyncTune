@@ -48,6 +48,22 @@ class MainActivity : FlutterActivity() {
     )
     @Volatile private var engineAlive = false
     private val stageSessions = ConcurrentHashMap<String, StageSession>()
+    private val readSessions = ConcurrentHashMap<String, ReadSession>()
+
+    private data class ReadSession(
+        val token: String,
+        val generation: String,
+        val resource: String,
+        val input: InputStream,
+        var nextOffset: Long = 0,
+        var touchedAt: Long = System.currentTimeMillis(),
+    )
+
+    private fun closeRead(handle: String) {
+        readSessions.remove(handle)?.let {
+            try { it.input.close() } catch (_: Exception) {}
+        }
+    }
 
     private data class DocumentRef(val uri: Uri, val id: String, val mime: String)
     private data class StageSession(
@@ -92,6 +108,17 @@ class MainActivity : FlutterActivity() {
             "scanMusic" -> scanMusic(call, result)
             "localReadChunk" -> brokerCall(result) {
                 localReadChunk(call)
+            }
+            "localCloseRead" -> brokerCall(result) {
+                val handle = call.argument<String>("readHandle")
+                    ?: throw IllegalArgumentException("missing read handle")
+                val session = readSessions[handle]
+                if (session != null && (session.token != call.argument<String>("token") ||
+                    session.generation != call.argument<String>("generation"))) {
+                    throw SecurityException("read handle scope changed")
+                }
+                closeRead(handle)
+                mapOf("status" to "ok")
             }
             "localStageBegin" -> brokerCall(result) {
                 localStageBegin(call)
@@ -305,8 +332,11 @@ class MainActivity : FlutterActivity() {
             "status" to if (restartCheck == "ok") "ok" else "pending",
             "restartCheck" to restartCheck,
             "fileIo" to "ok",
+            "token" to token,
+            "generation" to generation,
             "marker" to markerName,
             "markerContent" to markerText,
+            "restoredPid" to android.os.Process.myPid(),
             "path" to (grant["path"] as? String ?: ""),
         )
     }
@@ -495,9 +525,9 @@ class MainActivity : FlutterActivity() {
         "platform" to "android",
         "credentials" to "android_keystore_aes_gcm_app_private",
         "staging" to "persistent_after_finish_root_scoped",
-        "atomicCreate" to "unsupported_saf_provider",
-        "conditionalReplace" to "unsupported_saf_provider",
-        "conditionalDelete" to "unsupported_saf_provider",
+        "atomicCreate" to "verified_create_recovery",
+        "conditionalReplace" to "verified_backup_replace",
+        "conditionalDelete" to "verified_backup_delete",
         "temporaryPermission" to "not_verifiable",
     )
 
@@ -598,6 +628,9 @@ class MainActivity : FlutterActivity() {
         stageSessions.entries.removeIf {
             it.value.token == token && it.value.generation == generation
         }
+        readSessions.entries.filter {
+            it.value.token == token && it.value.generation == generation
+        }.forEach { closeRead(it.key) }
         val uri = Uri.parse(token)
         var releaseFailed = false
         contentResolver.persistedUriPermissions.filter { it.uri == uri }.forEach { permission ->
@@ -855,13 +888,40 @@ class MainActivity : FlutterActivity() {
         return found
     }
 
-    private fun readDocumentBytes(document: DocumentRef, offset: Long, maxBytes: Int): Pair<ByteArray, Long> {
+    private fun readChunk(
+        call: MethodCall, token: String, generation: String, resource: String,
+        resolve: () -> DocumentRef,
+    ): Map<String, Any?> {
+        val offset = call.argument<Number>("offset")?.toLong() ?: 0L
+        val maxBytes = call.argument<Number>("maxBytes")?.toInt() ?: 64 * 1024
         require(offset >= 0) { "offset must be non-negative" }
         require(maxBytes in 1..(1024 * 1024)) { "chunk size is out of range" }
-        val input = contentResolver.openInputStream(document.uri)
-            ?: throw IllegalStateException("provider cannot open file")
-        input.use { stream ->
-            skipFully(stream, offset)
+        val now = System.currentTimeMillis()
+        readSessions.entries.filter {
+            it.value.token != token || it.value.generation != generation ||
+                now - it.value.touchedAt > 60_000
+        }.forEach { closeRead(it.key) }
+        val providedHandle = call.argument<String>("readHandle")
+        val handle = providedHandle ?: UUID.randomUUID().toString()
+        val session = if (providedHandle == null) {
+            require(offset == 0L) { "a new read must start at zero" }
+            if (readSessions.size >= 16) throw IllegalStateException("too many open reads")
+            val document = resolve()
+            if (document.mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                throw IllegalStateException("path is a directory")
+            }
+            val input = contentResolver.openInputStream(document.uri)
+                ?: throw IllegalStateException("provider cannot open file")
+            ReadSession(token, generation, resource, input).also { readSessions[handle] = it }
+        } else {
+            readSessions[handle] ?: throw IllegalStateException("read session expired")
+        }
+        try {
+            if (session.token != token || session.generation != generation ||
+                session.resource != resource || session.nextOffset != offset) {
+                throw SecurityException("read session scope or offset changed")
+            }
+            val stream = session.input
             val buffer = ByteArray(maxBytes)
             var total = 0
             var reachedEof = false
@@ -887,37 +947,25 @@ class MainActivity : FlutterActivity() {
                 }
             }
             val bytes = buffer.copyOf(total)
-            return bytes to (offset + bytes.size)
-        }
-    }
-
-    private fun skipFully(input: InputStream, offset: Long) {
-        var remaining = offset
-        while (remaining > 0) {
-            val skipped = input.skip(remaining)
-            if (skipped <= 0) {
-                if (input.read() < 0) throw IllegalStateException("offset exceeds file length")
-                remaining--
-            } else {
-                remaining -= skipped
-            }
+            session.nextOffset += total
+            session.touchedAt = now
+            ensureActiveRoot(token, generation)
+            if (reachedEof) closeRead(handle)
+            return mapOf("status" to "ok", "bytes" to bytes, "offset" to offset,
+                "nextOffset" to session.nextOffset, "eof" to reachedEof, "readHandle" to handle)
+        } catch (error: Exception) {
+            closeRead(handle)
+            throw error
         }
     }
 
     private fun localReadChunk(call: MethodCall): Map<String, Any?> {
         val (token, generation) = brokerIdentity(call)
         val path = call.argument<String>("path") ?: throw IllegalArgumentException("missing path")
-        val offset = call.argument<Number>("offset")?.toLong() ?: 0L
-        val maxBytes = call.argument<Number>("maxBytes")?.toInt() ?: 64 * 1024
-        val document = resolveDocument(token, generation, path)
-            ?: throw IllegalStateException("file not found")
-        if (document.mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-            throw IllegalStateException("path is a directory")
+        normalizedSegments(path)
+        return readChunk(call, token, generation, "file:$path") {
+            resolveDocument(token, generation, path) ?: throw IllegalStateException("file not found")
         }
-        val (bytes, end) = readDocumentBytes(document, offset, maxBytes)
-        ensureActiveRoot(token, generation)
-        return mapOf("status" to "ok", "bytes" to bytes, "offset" to offset,
-            "nextOffset" to end, "eof" to (bytes.isEmpty() || bytes.size < maxBytes))
     }
 
     private fun localStageBegin(call: MethodCall): Map<String, Any?> {
@@ -1005,13 +1053,9 @@ class MainActivity : FlutterActivity() {
     private fun localOpenStagedChunk(call: MethodCall): Map<String, Any?> {
         val (token, generation) = brokerIdentity(call)
         val key = call.argument<String>("key") ?: throw IllegalArgumentException("missing staging handle")
-        val offset = call.argument<Number>("offset")?.toLong() ?: 0L
-        val maxBytes = call.argument<Number>("maxBytes")?.toInt() ?: 64 * 1024
-        val document = stageDocument(token, generation, key)
-        val (bytes, end) = readDocumentBytes(document, offset, maxBytes)
-        ensureActiveRoot(token, generation)
-        return mapOf("status" to "ok", "bytes" to bytes, "offset" to offset,
-            "nextOffset" to end, "eof" to (bytes.isEmpty() || bytes.size < maxBytes))
+        return readChunk(call, token, generation, "stage:$key") {
+            stageDocument(token, generation, key)
+        }
     }
 
     private fun localVerifyStaged(call: MethodCall): Map<String, Any?> {
@@ -1028,6 +1072,271 @@ class MainActivity : FlutterActivity() {
         ensureActiveRoot(token, generation)
         return mapOf("status" to "ok", "valid" to (actual == expected && length == expectedLength),
             "sha256" to actual, "length" to length)
+    }
+
+    private fun backupDocument(
+        token: String,
+        generation: String,
+        key: String,
+    ): DocumentRef? {
+        if (!stageKeyPattern.matches(key)) {
+            throw IllegalArgumentException("invalid staging handle")
+        }
+        val directory = stageDirectory(token, generation)
+        return childDocument(Uri.parse(token), directory.id, "$key.backup")
+    }
+
+    private fun createNamedDocument(
+        token: String,
+        generation: String,
+        parent: Uri,
+        parentId: String,
+        name: String,
+        mime: String,
+    ): DocumentRef {
+        val created = DocumentsContract.createDocument(
+            contentResolver,
+            parent,
+            mime,
+            name,
+        ) ?: throw IllegalStateException("provider cannot create $name")
+        val createdRef = DocumentRef(
+            created,
+            DocumentsContract.getDocumentId(created),
+            mime,
+        )
+        val confirmed = childDocument(Uri.parse(token), parentId, name)
+        if (confirmed == null || confirmed.id != createdRef.id) {
+            try {
+                DocumentsContract.deleteDocument(contentResolver, created)
+            } catch (_: Exception) {
+                // Leave the provider's unexpected name for a later rescan.
+            }
+            throw IllegalStateException("provider did not preserve requested filename")
+        }
+        ensureActiveRoot(token, generation)
+        return confirmed
+    }
+
+    private fun copyDocumentBytes(source: DocumentRef, target: DocumentRef) {
+        val input = contentResolver.openInputStream(source.uri)
+            ?: throw IllegalStateException("provider cannot read source object")
+        val output = contentResolver.openOutputStream(target.uri, "w")
+            ?: throw IllegalStateException("provider cannot write destination object")
+        input.use { sourceStream ->
+            output.use { destination ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val count = sourceStream.read(buffer)
+                    if (count < 0) break
+                    if (count == 0) continue
+                    destination.write(buffer, 0, count)
+                }
+                destination.flush()
+            }
+        }
+    }
+
+    private fun mimeForPath(path: String): String = when {
+        path.endsWith(".mp3", ignoreCase = true) -> "audio/mpeg"
+        path.endsWith(".flac", ignoreCase = true) -> "audio/flac"
+        path.endsWith(".wav", ignoreCase = true) -> "audio/wav"
+        path.endsWith(".m4a", ignoreCase = true) -> "audio/mp4"
+        path.endsWith(".aac", ignoreCase = true) -> "audio/aac"
+        path.endsWith(".ogg", ignoreCase = true) -> "audio/ogg"
+        path.endsWith(".opus", ignoreCase = true) -> "audio/opus"
+        else -> "application/octet-stream"
+    }
+
+    private fun publishDocument(
+        token: String,
+        generation: String,
+        source: DocumentRef,
+        path: String,
+    ): DocumentRef {
+        val (parent, name) = resolveParent(token, generation, path)
+        val parentId = DocumentsContract.getDocumentId(parent)
+        val target = createNamedDocument(
+            token,
+            generation,
+            parent,
+            parentId,
+            name,
+            mimeForPath(path),
+        )
+        try {
+            copyDocumentBytes(source, target)
+            ensureActiveRoot(token, generation)
+            return target
+        } catch (error: Exception) {
+            try {
+                DocumentsContract.deleteDocument(contentResolver, target.uri)
+            } catch (_: Exception) {
+                // Preserve the error and leave the staged evidence for recovery.
+            }
+            throw error
+        }
+    }
+
+    private fun recoverMoveMarker(
+        token: String,
+        generation: String,
+        key: String,
+        expectedHash: String,
+        path: String,
+    ): DocumentRef? {
+        val directory = stageDirectory(token, generation)
+        val treeUri = Uri.parse(token)
+        val stageParent = DocumentsContract.buildDocumentUriUsingTree(treeUri, directory.id)
+        val stagedMove = childDocument(treeUri, directory.id, "$key.move")
+        val sourceParent = resolveParent(token, generation, path).first
+        val sourceMove = childDocument(
+            treeUri,
+            DocumentsContract.getDocumentId(sourceParent),
+            "$key.move",
+        )
+        val marker = stagedMove ?: sourceMove ?: return null
+        val moved = if (stagedMove != null) marker.uri else DocumentsContract.moveDocument(
+            contentResolver, marker.uri, sourceParent, stageParent,
+        ) ?: throw IllegalStateException("provider cannot resume recovery move")
+        val renamed = DocumentsContract.renameDocument(
+            contentResolver, moved, "$key.backup",
+        ) ?: throw IllegalStateException("provider cannot finish recovery backup naming")
+        val recovered = childDocument(treeUri, directory.id, "$key.backup")
+            ?: throw IllegalStateException("provider did not expose the recovered backup")
+        if (DocumentsContract.getDocumentId(renamed) != recovered.id) {
+            throw IllegalStateException("provider returned an unexpected recovery backup")
+        }
+        ensureActiveRoot(token, generation)
+        val (hash, _) = sha256Document(recovered)
+        if (hash != expectedHash) {
+            restoreBackup(token, generation, key, path)
+            throw IllegalStateException("recoverable backup hash verification failed")
+        }
+        return recovered
+    }
+
+    private fun ensureBackup(
+        token: String,
+        generation: String,
+        source: DocumentRef,
+        key: String,
+        expectedHash: String,
+        sourceParent: Uri,
+        path: String,
+    ): DocumentRef {
+        val existing = backupDocument(token, generation, key)
+        if (existing != null) {
+            val (hash, _) = sha256Document(existing)
+            if (hash != expectedHash) {
+                throw IllegalStateException("recoverable backup content changed")
+            }
+            return existing
+        }
+        val recoveredMarker = recoverMoveMarker(token, generation, key, expectedHash, path)
+        if (recoveredMarker != null) return recoveredMarker
+        val directory = stageDirectory(token, generation)
+        val stageParent = DocumentsContract.buildDocumentUriUsingTree(
+            Uri.parse(token),
+            directory.id,
+        )
+        // Persist the operation key in the provider-visible name before the
+        // move. A process exit between move and rename can then be resumed
+        // without guessing from a basename shared by another directory.
+        val marked = DocumentsContract.renameDocument(
+            contentResolver,
+            source.uri,
+            "$key.move",
+        ) ?: throw IllegalStateException(
+            "provider cannot persist the recovery move record",
+        )
+        ensureActiveRoot(token, generation)
+        val moved = DocumentsContract.moveDocument(
+            contentResolver,
+            marked,
+            sourceParent,
+            stageParent,
+        ) ?: throw IllegalStateException(
+            "provider cannot move the verified original into recovery storage",
+        )
+        val renamed = DocumentsContract.renameDocument(
+            contentResolver,
+            moved,
+            "$key.backup",
+        ) ?: throw IllegalStateException(
+            "provider cannot name the recovery backup",
+        )
+        val backup = childDocument(Uri.parse(token), directory.id, "$key.backup")
+            ?: throw IllegalStateException("provider did not expose the recovery backup")
+        if (DocumentsContract.getDocumentId(renamed) != backup.id) {
+            throw IllegalStateException("provider returned an unexpected recovery backup")
+        }
+        ensureActiveRoot(token, generation)
+        val (hash, _) = sha256Document(backup)
+        if (hash != expectedHash) {
+            restoreBackup(token, generation, key, path)
+            throw IllegalStateException("recoverable backup hash verification failed")
+        }
+        return backup
+    }
+
+    private fun restoreBackup(
+        token: String,
+        generation: String,
+        key: String,
+        path: String,
+    ) {
+        val backup = backupDocument(token, generation, key)
+            ?: throw IllegalStateException("recoverable backup is missing")
+        val directory = stageDirectory(token, generation)
+        val stageParent = DocumentsContract.buildDocumentUriUsingTree(
+            Uri.parse(token),
+            directory.id,
+        )
+        val (parent, name) = resolveParent(token, generation, path)
+        val existing = resolveDocument(token, generation, path)
+        val restoreName = if (existing == null) {
+            name
+        } else {
+            "$name.synctune-recovery-$key"
+        }
+        val moved = DocumentsContract.moveDocument(
+            contentResolver,
+            backup.uri,
+            stageParent,
+            parent,
+        ) ?: throw IllegalStateException("provider cannot restore the recovery backup")
+        val renamed = DocumentsContract.renameDocument(contentResolver, moved, restoreName)
+            ?: throw IllegalStateException("provider cannot restore the original filename")
+        val restored = childDocument(
+            Uri.parse(token),
+            DocumentsContract.getDocumentId(parent),
+            restoreName,
+        ) ?: throw IllegalStateException("provider did not expose the restored file")
+        if (DocumentsContract.getDocumentId(renamed) != restored.id) {
+            throw IllegalStateException("provider returned an unexpected restored file")
+        }
+        ensureActiveRoot(token, generation)
+    }
+
+    private fun finishLocalCommit(
+        token: String,
+        generation: String,
+        staged: DocumentRef,
+        path: String,
+        expectedHash: String,
+        expectedLength: Long,
+    ): DocumentRef {
+        val published = publishDocument(token, generation, staged, path)
+        val (actual, length) = sha256Document(published)
+        ensureActiveRoot(token, generation)
+        if (actual != expectedHash || length != expectedLength) {
+            // Keep the published bytes visible for reconciliation. They may
+            // have changed after publication; deleting unknown content would
+            // turn a recoverable conflict into data loss.
+            throw IllegalStateException("published content verification failed")
+        }
+        return published
     }
 
     private fun localCommitStaged(call: MethodCall): Map<String, Any?> {
@@ -1052,30 +1361,55 @@ class MainActivity : FlutterActivity() {
         ensureActiveRoot(token, generation)
         val conditionType = condition["type"]?.toString()
         if (conditionType == "createOnly") {
-            if (existing != null) throw SecurityException("local create-only precondition failed")
-            // DocumentsContract has no conditional create/atomic rename
-            // capability bit. A copy followed by rename can race another
-            // writer or be auto-renamed by a provider, so retain the verified
-            // stage and stop instead of claiming LocalCreateOnly semantics.
-            throw IllegalStateException("atomic conditional create is unsupported by SAF provider")
+            if (existing != null) {
+                val (actual, length) = sha256Document(existing)
+                if (actual != stagedHash || length != stagedLength) {
+                    throw SecurityException("local create-only precondition failed")
+                }
+                return mapOf("status" to "ok", "path" to path, "sha256" to actual,
+                    "length" to length, "mode" to "verified_create_recovery")
+            }
+            finishLocalCommit(token, generation, document, path, expectedHash, expectedLength)
         } else if (conditionType == "matchSha256") {
             val match = condition["sha256"]?.toString()?.lowercase()
             if (existing == null || match == null || !Regex("^[0-9a-f]{64}$").matches(match)) {
+                if (existing == null && match != null && Regex("^[0-9a-f]{64}$").matches(match)) {
+                    val recovered = recoverMoveMarker(token, generation, key, match, path)
+                    if (recovered != null) {
+                        finishLocalCommit(token, generation, document, path, expectedHash, expectedLength)
+                        return mapOf("status" to "ok", "path" to path,
+                            "sha256" to expectedHash, "length" to expectedLength,
+                            "mode" to "verified_backup_replace")
+                    }
+                }
                 throw SecurityException("local hash precondition failed")
             }
             val (actual, _) = sha256Document(existing)
             ensureActiveRoot(token, generation)
+            if (actual == stagedHash) {
+                return mapOf("status" to "ok", "path" to path, "sha256" to actual,
+                    "length" to stagedLength, "mode" to "already_committed")
+            }
             if (actual != match) throw SecurityException("local hash precondition failed")
-            // SAF has no conditional replace primitive. Preserve the stage and
-            // stop rather than claiming compare-and-swap semantics.
-            throw IllegalStateException("atomic conditional replace is unsupported by SAF provider")
+            val priorBackup = backupDocument(token, generation, key)
+            if (priorBackup != null) {
+                throw SecurityException("recovery backup and target both exist; rescan required")
+            }
+            val (sourceParent, _) = resolveParent(token, generation, path)
+            ensureBackup(token, generation, existing, key, match, sourceParent, path)
+            try {
+                finishLocalCommit(token, generation, document, path, expectedHash, expectedLength)
+            } catch (error: Exception) {
+                if (resolveDocument(token, generation, path) == null) {
+                    restoreBackup(token, generation, key, path)
+                }
+                throw error
+            }
         } else {
             throw IllegalArgumentException("unsupported local condition")
         }
-        // The branches above either reject an existing target or stop with a
-        // preserved stage. Keep this return unreachable as a guard for future
-        // provider-specific atomic capability support.
-        throw IllegalStateException("SAF commit capability gate was not satisfied")
+        return mapOf("status" to "ok", "path" to path, "sha256" to stagedHash,
+            "length" to stagedLength, "mode" to "verified_backup_replace")
     }
 
     private fun localDelete(call: MethodCall): Map<String, Any?> {
@@ -1088,14 +1422,43 @@ class MainActivity : FlutterActivity() {
         }
         val expected = condition["sha256"]?.toString()?.lowercase()
             ?: throw IllegalArgumentException("missing local delete hash")
+        val backupKey = call.argument<String>("backupKey")
+            ?: throw IllegalArgumentException("missing local delete backup handle")
+        if (!stageKeyPattern.matches(backupKey)) {
+            throw IllegalArgumentException("invalid local delete backup handle")
+        }
+        val priorBackup = backupDocument(token, generation, backupKey)
         val document = resolveDocument(token, generation, path)
-            ?: throw SecurityException("local delete precondition failed")
+        if (document == null) {
+            if (priorBackup != null) {
+                val (backupHash, _) = sha256Document(priorBackup)
+                if (backupHash == expected) {
+                    return mapOf("status" to "ok", "path" to path,
+                        "sha256" to expected, "mode" to "already_deleted_recovery")
+                }
+            }
+            val recovered = recoverMoveMarker(token, generation, backupKey, expected, path)
+            if (recovered != null) {
+                return mapOf("status" to "ok", "path" to path,
+                    "sha256" to expected, "mode" to "already_deleted_recovery")
+            }
+            throw SecurityException("local delete target missing; rescan required")
+        }
+        if (priorBackup != null) {
+            throw SecurityException("recovery backup and target both exist; rescan required")
+        }
         val (actual, _) = sha256Document(document)
+        ensureActiveRoot(token, generation)
         if (actual != expected) throw SecurityException("local delete precondition failed")
-        // SAF has no compare-and-delete primitive. A hash check followed by
-        // delete could remove bytes changed by another writer, so leave the
-        // target and stop with a recoverable precondition gate.
-        throw IllegalStateException("atomic conditional delete is unsupported by SAF provider")
+        val (sourceParent, _) = resolveParent(token, generation, path)
+        ensureBackup(token, generation, document, backupKey, expected, sourceParent, path)
+        val current = resolveDocument(token, generation, path)
+        if (current != null) {
+            throw SecurityException("provider did not move the verified delete target")
+        }
+        ensureActiveRoot(token, generation)
+        return mapOf("status" to "ok", "path" to path,
+            "sha256" to expected, "mode" to "verified_backup_delete")
     }
 
     private fun postToLiveEngine(action: () -> Unit) {
@@ -1371,6 +1734,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         engineAlive = false
+        readSessions.keys.toList().forEach { closeRead(it) }
         pendingRootResult?.let {
             try {
                 it.error("activity_destroyed", "Folder picker activity was closed.", null)
