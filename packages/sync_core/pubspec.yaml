@@ -1,0 +1,7 @@
+name: synctune_sync_core
+description: Pure Dart synchronization kernel for SyncTune.
+publish_to: none
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+dev_dependencies:
+  test: ^1.25.8
