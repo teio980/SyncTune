@@ -48,8 +48,8 @@ void main() {
 
   test('throws StateError when no target is active', () async {
     targetPort.setRoot(null);
-    expect(
-      () => service.deleteSong(
+    await expectLater(
+      service.deleteSong(
         relativePath: 'song.mp3',
         expectedSha256: 'a' * 64,
       ),
@@ -80,8 +80,8 @@ void main() {
     const sha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     localStore.existingFiles['song.mp3'] = 'different_sha';
 
-    expect(
-      () => service.deleteSong(
+    await expectLater(
+      service.deleteSong(
         relativePath: 'song.mp3',
         expectedSha256: sha,
       ),
@@ -100,8 +100,8 @@ void main() {
     final exclusiveRun = runtime.runExclusive(() => blocker.future);
 
     // Deletion attempt while slot is occupied should fail
-    expect(
-      () => service.deleteSong(
+    await expectLater(
+      service.deleteSong(
         relativePath: 'song.mp3',
         expectedSha256: sha,
       ),
@@ -119,7 +119,7 @@ void main() {
     // Seed task that stopped at pending_local
     await database.saveDeletionTask(DeletionTaskRecord(
       operationId: 'op-1',
-      rootId: grant.token,
+      rootId: '${grant.token}|epoch-1',
       generation: grant.generation,
       remoteNamespace: 'epoch-1',
       entryId: 'entry-1',
