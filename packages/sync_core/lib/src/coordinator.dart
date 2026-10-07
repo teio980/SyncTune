@@ -371,8 +371,19 @@ final class SyncCoordinator {
               )) {
             return false;
           }
+        case SyncOperationKind.tombstoneRemote:
+          if (!_remoteConditionMatches(
+                operation.metadataCondition,
+                remoteObject?.metadataEtag,
+              )) {
+            return false;
+          }
         case SyncOperationKind.deleteLocal:
           if (!_localConditionMatches(operation.localCondition, localEntry)) {
+            return false;
+          }
+        case SyncOperationKind.tombstoneLocal:
+          if (localEntry != null && !localEntry.isDeleted) {
             return false;
           }
         case SyncOperationKind.updateFavoriteToRemote:
@@ -659,11 +670,15 @@ final class SyncCoordinator {
             localEntry != null &&
             localEntry.favorite == source.favorite;
       case SyncOperationKind.deleteRemote:
+      case SyncOperationKind.tombstoneRemote:
         return (localEntry == null ||
+                localEntry.isDeleted ||
                 (source != null && localEntry.contentEquals(source))) &&
             (remoteObject == null || remoteObject.entry.isDeleted);
       case SyncOperationKind.deleteLocal:
+      case SyncOperationKind.tombstoneLocal:
         return (remoteObject == null ||
+                remoteObject.entry.isDeleted ||
                 (source != null && remoteObject.entry.contentEquals(source))) &&
             (localEntry == null || localEntry.isDeleted);
       case SyncOperationKind.conflict:

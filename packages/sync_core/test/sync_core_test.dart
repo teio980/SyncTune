@@ -93,7 +93,7 @@ void main() {
     expect(b.merge(c), c);
     expect(c.merge(c), c);
   });
-  test('delete versus edit keeps the live entry', () {
+  test('delete priority: delete versus edit preserves the tombstone', () {
     final p = SyncPath.parse('music/song.mp3');
     final base = file('song', p, 'a');
     final tombstone = SyncEntry.tombstone(
@@ -103,8 +103,18 @@ void main() {
         .merge(base: base, local: tombstone, remote: edit);
     final two = const ThreeWayMerger()
         .merge(base: base, local: edit, remote: tombstone);
-    expect(one.entry!.isDeleted, isFalse);
-    expect(two.entry!.isDeleted, isFalse);
+    expect(one.entry!.isDeleted, isTrue);
+    expect(two.entry!.isDeleted, isTrue);
+  });
+  test('delete priority: tombstone wins without baseline and with different ids', () {
+    final p = SyncPath.parse('music/song.mp3');
+    final tombstone = SyncEntry.tombstone(
+        id: 'local-id', path: p, modifiedAtUtc: now, revision: 1);
+    final remoteEdit = file('remote-id', p, 'b', revision: 1);
+    final merged = const ThreeWayMerger()
+        .merge(base: null, local: tombstone, remote: remoteEdit);
+    expect(merged.entry!.isDeleted, isTrue);
+    expect(merged.conflict, isFalse);
   });
   test('delete versus edit still merges the independent favorite stamp', () {
     final p = SyncPath.parse('music/song.mp3');
@@ -129,7 +139,7 @@ void main() {
       local: tombstone,
       remote: edit,
     );
-    expect(merged.entry!.isDeleted, isFalse);
+    expect(merged.entry!.isDeleted, isTrue);
     expect(merged.entry!.favorite, tombstone.favorite);
   });
   test('same initial content with different identities does not duplicate', () {
@@ -304,7 +314,7 @@ void main() {
     expect(operation.kind, SyncOperationKind.updateFavoriteToRemote);
     expect((operation.condition! as MatchEtag).etag, '"favorite-1"');
   });
-  test('editing over a remote tombstone recreates content safely', () {
+  test('remote tombstone takes priority over local edit and deletes local', () {
     final p = SyncPath.parse('music/song.mp3');
     final base = file('song', p, 'a');
     final edited = file('song', p, 'b', revision: 1);
@@ -315,7 +325,7 @@ void main() {
       revision: 1,
     );
     final plan = const SyncPlanner().plan(
-      planId: 'recreate-after-tombstone',
+      planId: 'remote-tombstone-priority',
       root: root,
       baseline: local([base]),
       local: local([edited]),
@@ -328,10 +338,81 @@ void main() {
       }),
     );
     final operation = plan.operations.single;
-    expect(operation.kind, SyncOperationKind.putLocalToRemote);
-    expect(operation.condition, isA<CreateOnly>());
-    expect((operation.metadataCondition! as MatchEtag).etag,
-        '"tombstone-metadata"');
+    expect(operation.kind, SyncOperationKind.deleteLocal);
+    expect(operation.source!.isDeleted, isTrue);
+    expect(operation.source!.id, tombstone.id);
+  });
+  test('tombstoneRemote is planned and executed when remote content is absent', () async {
+    final p = SyncPath.parse('music/song.mp3');
+    final tombstone = SyncEntry.tombstone(
+        id: 'song', path: p, modifiedAtUtc: now, revision: 1);
+    final plan = const SyncPlanner().plan(
+      planId: 'plan-tombstone-remote',
+      root: root,
+      baseline: null,
+      local: local([tombstone]),
+      remote: remote({}),
+    );
+    final operation = plan.operations.single;
+    expect(operation.kind, SyncOperationKind.tombstoneRemote);
+
+    final localStore = FakeLocal();
+    final remoteRepo = FakeRemote();
+    final result = await const SyncCoordinator().run(
+      root,
+      planId: 'exec-tombstone-remote',
+      localSnapshots: SnapshotSequenceLocal([
+        local([tombstone]),
+        local([tombstone]),
+      ]),
+      remoteSnapshots: SnapshotSequenceRemote([
+        remote({}),
+        remote({p: RemoteObject(entry: tombstone, etag: null, metadataEtag: '"m1"')}),
+      ]),
+      baseline: FakeBaseline(),
+      local: localStore,
+      remote: remoteRepo,
+      journal: FakeJournal(),
+    );
+    result.requireConfirmed();
+    expect(remoteRepo.putTombstoneCalls, 1);
+  });
+  test('tombstoneLocal is planned and executed when local file is absent', () async {
+    final p = SyncPath.parse('music/song.mp3');
+    final tombstone = SyncEntry.tombstone(
+        id: 'song', path: p, modifiedAtUtc: now, revision: 1);
+    final plan = const SyncPlanner().plan(
+      planId: 'plan-tombstone-local',
+      root: root,
+      baseline: null,
+      local: local([]),
+      remote: remote({
+        p: RemoteObject(entry: tombstone, etag: null, metadataEtag: '"m1"')
+      }),
+    );
+    final operation = plan.operations.single;
+    expect(operation.kind, SyncOperationKind.tombstoneLocal);
+
+    final localStore = FakeLocal();
+    final remoteRepo = FakeRemote();
+    final result = await const SyncCoordinator().run(
+      root,
+      planId: 'exec-tombstone-local',
+      localSnapshots: SnapshotSequenceLocal([
+        local([]),
+        local([tombstone]),
+      ]),
+      remoteSnapshots: SnapshotSequenceRemote([
+        remote({p: RemoteObject(entry: tombstone, etag: null, metadataEtag: '"m1"')}),
+        remote({p: RemoteObject(entry: tombstone, etag: null, metadataEtag: '"m1"')}),
+      ]),
+      baseline: FakeBaseline(),
+      local: localStore,
+      remote: remoteRepo,
+      journal: FakeJournal(),
+    );
+    result.requireConfirmed();
+    expect(localStore.saveTombstoneCalls, 1);
   });
   test('missing favorite object uses create-only CAS', () {
     final p = SyncPath.parse('music/song.mp3');
@@ -1248,12 +1329,24 @@ final class FakeLocal implements LocalObjectStore, LocalPlanRecovery {
     committedEntry = entry;
   }
 
+  int saveTombstoneCalls = 0;
+  SyncEntry? savedLocalTombstone;
+
+  @override
+  Future<void> saveTombstone(SyncPath path, SyncEntry tombstone,
+      {CancellationToken token = const NeverCancelled()}) async {
+    saveTombstoneCalls++;
+    savedLocalTombstone = tombstone;
+  }
+
   @override
   Future<void> delete(SyncPath path,
       {required LocalCondition condition,
+      SyncEntry? tombstone,
       String? operationId,
       CancellationToken token = const NeverCancelled()}) async {
     deleteCalls++;
+    savedLocalTombstone = tombstone;
     if (condition is LocalMatchSha256 && condition.sha256 != currentSha256) {
       throw NeedsRescan('local object changed before delete');
     }
@@ -1270,7 +1363,9 @@ final class FakeRemote implements RemoteRepository {
   FakeRemote({this.preconditionFailure = false});
   final bool preconditionFailure;
   int putCalls = 0;
+  int putTombstoneCalls = 0;
   SyncEntry? uploadedEntry;
+  SyncEntry? savedRemoteTombstone;
   RemoteCondition? uploadedContentCondition;
   RemoteCondition? uploadedMetadataCondition;
   @override
@@ -1292,11 +1387,24 @@ final class FakeRemote implements RemoteRepository {
   }
 
   @override
+  Future<void> putTombstone(SyncPath path,
+      {required SyncEntry tombstone,
+      required RemoteCondition metadataCondition,
+      CancellationToken token = const NeverCancelled()}) async {
+    putTombstoneCalls++;
+    savedRemoteTombstone = tombstone;
+    uploadedMetadataCondition = metadataCondition;
+    if (preconditionFailure) throw RemotePreconditionFailed(path);
+  }
+
+  @override
   Future<void> delete(SyncPath path,
       {required MatchEtag condition,
       SyncEntry? tombstone,
       RemoteCondition? metadataCondition,
-      CancellationToken token = const NeverCancelled()}) async {}
+      CancellationToken token = const NeverCancelled()}) async {
+    savedRemoteTombstone = tombstone;
+  }
   @override
   Future<void> updateFavorite(SyncPath path, FavoriteStamp stamp,
       {required RemoteCondition condition,

@@ -10,6 +10,8 @@ enum SyncOperationKind {
   deleteRemote,
   deleteLocal,
   conflict,
+  tombstoneRemote,
+  tombstoneLocal,
 }
 
 final class SyncOperation {
@@ -217,13 +219,30 @@ final class SyncPlanner {
         if (!contentSameRemote) {
           if (chosen.isDeleted && !canDelete) {
             deletionsSuppressed = true;
-          } else if (!chosen.isDeleted || remoteEntry != null) {
+          } else if (chosen.isDeleted) {
+            final hasRemoteFile = remoteEntry != null && !remoteEntry.isDeleted;
+            final kind = hasRemoteFile
+                ? SyncOperationKind.deleteRemote
+                : SyncOperationKind.tombstoneRemote;
             operations.add(_op(
               planId,
               root.generation,
-              chosen.isDeleted
-                  ? SyncOperationKind.deleteRemote
-                  : SyncOperationKind.putLocalToRemote,
+              kind,
+              path,
+              chosen,
+              remoteEntry,
+              kind == SyncOperationKind.deleteRemote
+                  ? _contentCondition(remoteObject)
+                  : null,
+              null,
+              null,
+              _metadataCondition(remoteObject),
+            ));
+          } else {
+            operations.add(_op(
+              planId,
+              root.generation,
+              SyncOperationKind.putLocalToRemote,
               path,
               chosen,
               remoteEntry,
@@ -262,13 +281,29 @@ final class SyncPlanner {
         if (!contentSameLocal) {
           if (chosen.isDeleted && !canDelete) {
             deletionsSuppressed = true;
-          } else if (!chosen.isDeleted || localEntry != null) {
+          } else if (chosen.isDeleted) {
+            final hasLocalFile = localEntry != null && !localEntry.isDeleted;
+            final kind = hasLocalFile
+                ? SyncOperationKind.deleteLocal
+                : SyncOperationKind.tombstoneLocal;
             operations.add(_op(
               planId,
               root.generation,
-              chosen.isDeleted
-                  ? SyncOperationKind.deleteLocal
-                  : SyncOperationKind.putRemoteToLocal,
+              kind,
+              path,
+              chosen,
+              null,
+              null,
+              null,
+              kind == SyncOperationKind.deleteLocal
+                  ? localEntry?.sha256
+                  : null,
+            ));
+          } else {
+            operations.add(_op(
+              planId,
+              root.generation,
+              SyncOperationKind.putRemoteToLocal,
               path,
               chosen,
               null,

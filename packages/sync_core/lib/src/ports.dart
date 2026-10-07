@@ -110,8 +110,11 @@ abstract interface class LocalObjectStore {
       CancellationToken token = const NeverCancelled()});
   Future<void> delete(SyncPath path,
       {required LocalCondition condition,
+      SyncEntry? tombstone,
       String? operationId,
       CancellationToken token = const NeverCancelled()});
+  Future<void> saveTombstone(SyncPath path, SyncEntry tombstone,
+      {CancellationToken token = const NeverCancelled()});
   Future<void> updateFavorite(SyncPath path, FavoriteStamp stamp,
       {CancellationToken token = const NeverCancelled()});
 }
@@ -201,6 +204,10 @@ abstract interface class RemoteRepository {
       {required MatchEtag condition,
       SyncEntry? tombstone,
       RemoteCondition? metadataCondition,
+      CancellationToken token = const NeverCancelled()});
+  Future<void> putTombstone(SyncPath path,
+      {required SyncEntry tombstone,
+      required RemoteCondition metadataCondition,
       CancellationToken token = const NeverCancelled()});
   Future<void> updateFavorite(SyncPath path, FavoriteStamp stamp,
       {required RemoteCondition condition,
