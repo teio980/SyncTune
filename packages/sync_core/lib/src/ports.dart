@@ -13,6 +13,53 @@ abstract interface class CancellationSignal {
   Future<void>? get onCancel;
 }
 
+/// Optional run-scoped telemetry. Adapters keep accepting plain cancellation
+/// tokens; the foreground runtime also implements this contract.
+final class SyncProgress {
+  const SyncProgress(
+      {required this.stage,
+      this.path,
+      this.completedItems = 0,
+      this.itemLabel = 'Files processed',
+      this.totalItems,
+      this.completedBytes = 0,
+      this.totalBytes});
+  final String stage;
+  final String? path;
+  final int completedItems;
+  final String itemLabel;
+  final int? totalItems;
+  final int completedBytes;
+  final int? totalBytes;
+}
+
+abstract interface class SyncProgressReporter {
+  SyncProgress? get progress;
+  void reportProgress(SyncProgress progress);
+}
+
+void reportSyncProgress(CancellationToken token, SyncProgress progress) {
+  token.throwIfCancelled();
+  if (token is SyncProgressReporter) {
+    (token as SyncProgressReporter).reportProgress(progress);
+  }
+}
+
+void reportSyncBytes(CancellationToken token, int bytes, {int? total}) {
+  if (token is! SyncProgressReporter || token.isCancelled) return;
+  final reporter = token as SyncProgressReporter;
+  final current = reporter.progress;
+  if (current == null) return;
+  reporter.reportProgress(SyncProgress(
+      stage: current.stage,
+      path: current.path,
+      completedItems: current.completedItems,
+      itemLabel: current.itemLabel,
+      totalItems: current.totalItems,
+      completedBytes: bytes,
+      totalBytes: total ?? current.totalBytes));
+}
+
 final class NeverCancelled implements CancellationToken {
   const NeverCancelled();
   @override
@@ -63,6 +110,7 @@ abstract interface class LocalObjectStore {
       CancellationToken token = const NeverCancelled()});
   Future<void> delete(SyncPath path,
       {required LocalCondition condition,
+      String? operationId,
       CancellationToken token = const NeverCancelled()});
   Future<void> updateFavorite(SyncPath path, FavoriteStamp stamp,
       {CancellationToken token = const NeverCancelled()});
@@ -213,6 +261,19 @@ final class JournalRecord {
 abstract interface class JournalStore {
   Future<List<JournalRecord>> recordsFor(String planId, String generation);
   Future<void> append(JournalRecord record);
+}
+
+/// Optional local recovery hook. Implementations reconcile a durable local
+/// mutation journal before a fresh scan can interpret a temporarily missing
+/// path as a user deletion. Providers keep the operation scoped to the active
+/// root generation and may reject it when the evidence is insufficient.
+abstract interface class LocalPlanRecovery {
+  Future<void> recoverPendingPlan(
+    SyncRoot root,
+    SyncPlan plan, {
+    required Iterable<JournalRecord> journal,
+    CancellationToken token = const NeverCancelled(),
+  });
 }
 
 /// Durable plan boundary. Implementations persist a complete encoded plan

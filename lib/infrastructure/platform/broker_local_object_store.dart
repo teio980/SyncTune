@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:synctune_sync_core/synctune_sync_core.dart';
 
@@ -59,7 +62,8 @@ final class BrokerError extends NeedsRescan {
 /// and opaque staging key. Native code owns URI/StorageFolder traversal and
 /// all filesystem I/O. Every chunk call re-reads the current root, so a root
 /// switch stops an in-flight operation at its next broker boundary.
-final class BrokerLocalObjectStore implements LocalObjectStore {
+final class BrokerLocalObjectStore
+    implements LocalObjectStore, LocalPlanRecovery {
   BrokerLocalObjectStore({
     required this.channel,
     required this.root,
@@ -164,40 +168,59 @@ final class BrokerLocalObjectStore implements LocalObjectStore {
     required CancellationToken token,
   }) async* {
     var offset = 0;
-    while (true) {
-      token.throwIfCancelled();
-      final response = await _callMap(method, <String, Object?>{
-        ...arguments,
-        'offset': offset,
-        'maxBytes': chunkSize,
-      }, pinned: pinned);
-      token.throwIfCancelled();
-      final bytes = _bytesField(response);
-      final next = _intField(response, 'nextOffset');
-      if (bytes.length > chunkSize ||
-          next < offset ||
-          next - offset != bytes.length) {
-        throw const BrokerError(
-          'protocol',
-          'Broker returned a non-contiguous chunk.',
-        );
+    String? readHandle;
+    try {
+      while (true) {
+        token.throwIfCancelled();
+        final response = await _callMap(method, <String, Object?>{
+          ...arguments,
+          'offset': offset,
+          'maxBytes': chunkSize,
+          'readHandle': ?readHandle,
+        }, pinned: pinned);
+        readHandle = response['readHandle']?.toString() ?? readHandle;
+        token.throwIfCancelled();
+        final bytes = _bytesField(response);
+        final next = _intField(response, 'nextOffset');
+        if (bytes.length > chunkSize ||
+            next < offset ||
+            next - offset != bytes.length) {
+          throw const BrokerError(
+            'protocol',
+            'Broker returned a non-contiguous chunk.',
+          );
+        }
+        if (bytes.isNotEmpty) yield bytes;
+        offset = next;
+        final eof = response['eof'];
+        if (eof is! bool) {
+          throw const BrokerError(
+            'protocol',
+            'Broker response has no boolean EOF field.',
+          );
+        }
+        if (bytes.isEmpty && !eof) {
+          throw const BrokerError(
+            'protocol',
+            'Broker returned an empty non-EOF chunk.',
+          );
+        }
+        if (eof) return;
       }
-      if (bytes.isNotEmpty) yield bytes;
-      offset = next;
-      final eof = response['eof'];
-      if (eof is! bool) {
-        throw const BrokerError(
-          'protocol',
-          'Broker response has no boolean EOF field.',
-        );
+    } finally {
+      // Android owns a sequential stream. Older/Windows brokers keep the
+      // offset protocol and omit this handle. Close even after cancellation.
+      if (readHandle != null) {
+        try {
+          await channel.invokeMethod<Object?>('localCloseRead', {
+            'token': pinned.token,
+            'generation': pinned.generation,
+            'readHandle': readHandle,
+          });
+        } catch (_) {
+          // The native broker also closes EOF, stale and expired sessions.
+        }
       }
-      if (bytes.isEmpty && !eof) {
-        throw const BrokerError(
-          'protocol',
-          'Broker returned an empty non-EOF chunk.',
-        );
-      }
-      if (eof) return;
     }
   }
 
@@ -268,6 +291,7 @@ final class BrokerLocalObjectStore implements LocalObjectStore {
             );
           }
           offset = next;
+          reportSyncBytes(token, offset);
         }
       } else {
         final written = await _callMap('localStageWrite', <String, Object?>{
@@ -284,6 +308,7 @@ final class BrokerLocalObjectStore implements LocalObjectStore {
           );
         }
         offset = next;
+        reportSyncBytes(token, offset);
       }
     }
     token.throwIfCancelled();
@@ -410,15 +435,137 @@ final class BrokerLocalObjectStore implements LocalObjectStore {
   Future<void> delete(
     SyncPath path, {
     required LocalCondition condition,
+    String? operationId,
     CancellationToken token = const NeverCancelled(),
   }) async {
     token.throwIfCancelled();
     final pinned = _requireRoot();
     await _callMap('localDelete', <String, Object?>{
       'path': path.value,
+      'backupKey': _backupKey(path, condition, operationId),
       'condition': _conditionMap(condition),
     }, pinned: pinned);
     token.throwIfCancelled();
+  }
+
+  @override
+  Future<void> recoverPendingPlan(
+    SyncRoot root,
+    SyncPlan plan, {
+    required Iterable<JournalRecord> journal,
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    final current = _requireRoot();
+    if (current.token != root.id || current.generation != root.generation) {
+      throw const BrokerError(
+        'root_changed',
+        'The authorized root changed before local recovery.',
+      );
+    }
+    // A failed journal append is deliberately allowed after an external
+    // mutation. Keep the newest staged evidence until a later committed
+    // record supersedes it; otherwise a failed marker would hide the exact
+    // bytes needed for recovery on the next launch.
+    final latestStaged = <String, JournalRecord>{};
+    final committed = <String>{};
+    for (final record in journal) {
+      if (record.state == JournalState.committed) {
+        committed.add(record.operationId);
+        latestStaged.remove(record.operationId);
+      } else if (record.state == JournalState.staged &&
+          !committed.contains(record.operationId)) {
+        latestStaged[record.operationId] = record;
+      }
+    }
+    for (final record in latestStaged.values) {
+      token.throwIfCancelled();
+      final match = _pendingLocalMutation(plan, record, latestStaged);
+      if (match == null) continue;
+      if (match.delete) {
+        await delete(
+          match.path,
+          condition: match.condition,
+          operationId: record.operationId,
+          token: token,
+        );
+      } else {
+        final key = match.stagingKey;
+        final hash = match.newHash;
+        final length = match.length;
+        final entry = match.entry;
+        if (key == null || hash == null || length == null || entry == null) {
+          throw const BrokerError(
+            'recovery_evidence_missing',
+            'The interrupted local mutation has incomplete recovery evidence.',
+          );
+        }
+        await commitStaged(
+          match.path,
+          StagedObject(key: key, sha256: hash, length: length),
+          entry: entry,
+          condition: match.condition,
+          token: token,
+        );
+      }
+    }
+  }
+
+  _PendingLocalMutation? _pendingLocalMutation(
+    SyncPlan plan,
+    JournalRecord record,
+    Map<String, JournalRecord> latest,
+  ) {
+    for (final operation in plan.operations) {
+      if (operation.id == record.operationId) {
+        if (operation.kind == SyncOperationKind.deleteLocal &&
+            operation.localCondition is LocalMatchSha256) {
+          return _PendingLocalMutation.delete(
+            operation.path,
+            operation.localCondition! as LocalMatchSha256,
+          );
+        }
+        if (operation.kind == SyncOperationKind.putRemoteToLocal &&
+            operation.source != null &&
+            operation.localCondition != null) {
+          return _PendingLocalMutation.commit(
+            operation.path,
+            operation.source!,
+            operation.localCondition!,
+            record,
+          );
+        }
+      }
+      if (operation.kind != SyncOperationKind.conflict) continue;
+      String? step;
+      for (final candidate in const ['local-preserve', 'local-primary']) {
+        if (conflictCheckpointId(operation, candidate) == record.operationId) {
+          step = candidate;
+          break;
+        }
+      }
+      if (step == null) continue;
+      final stageStep = step == 'local-preserve'
+          ? 'stage-secondary'
+          : 'stage-primary';
+      final stageRecord = latest[conflictCheckpointId(operation, stageStep)];
+      if (stageRecord?.stagingKey == null ||
+          stageRecord?.sha256 == null ||
+          stageRecord?.length == null) {
+        return null;
+      }
+      final entry = step == 'local-preserve'
+          ? operation.other
+          : operation.source;
+      final condition = step == 'local-preserve'
+          ? const LocalCreateOnly()
+          : operation.localCondition;
+      final path = step == 'local-preserve'
+          ? operation.preservePath
+          : operation.path;
+      if (entry == null || condition == null || path == null) return null;
+      return _PendingLocalMutation.commit(path, entry, condition, stageRecord!);
+    }
+    return null;
   }
 
   @override
@@ -445,4 +592,60 @@ final class BrokerLocalObjectStore implements LocalObjectStore {
           'Unknown local condition.',
         ),
       };
+
+  String _backupKey(
+    SyncPath path,
+    LocalCondition condition,
+    String? operationId,
+  ) {
+    final digest = sha256
+        .convert(
+          utf8.encode(
+            '${path.value}\u0000${condition.fingerprint}\u0000${operationId ?? ''}',
+          ),
+        )
+        .toString();
+    return '${digest.substring(0, 8)}-${digest.substring(8, 12)}-'
+        '${digest.substring(12, 16)}-${digest.substring(16, 20)}-'
+        '${digest.substring(20, 32)}';
+  }
+}
+
+final class _PendingLocalMutation {
+  const _PendingLocalMutation._({
+    required this.path,
+    required this.condition,
+    this.entry,
+    this.stagingKey,
+    this.newHash,
+    this.length,
+    this.delete = false,
+  });
+
+  factory _PendingLocalMutation.delete(
+    SyncPath path,
+    LocalMatchSha256 condition,
+  ) => _PendingLocalMutation._(path: path, condition: condition, delete: true);
+
+  factory _PendingLocalMutation.commit(
+    SyncPath path,
+    SyncEntry entry,
+    LocalCondition condition,
+    JournalRecord staged,
+  ) => _PendingLocalMutation._(
+    path: path,
+    condition: condition,
+    entry: entry,
+    stagingKey: staged.stagingKey,
+    newHash: staged.sha256 ?? entry.sha256,
+    length: staged.length ?? entry.size,
+  );
+
+  final SyncPath path;
+  final LocalCondition condition;
+  final SyncEntry? entry;
+  final String? stagingKey;
+  final String? newHash;
+  final int? length;
+  final bool delete;
 }

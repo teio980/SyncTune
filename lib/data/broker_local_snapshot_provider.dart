@@ -108,6 +108,16 @@ final class BrokerLocalSnapshotProvider implements LocalSnapshotProvider {
       if (raw is! Map) {
         throw const NeedsRescan('local broker scan returned a malformed item');
       }
+      reportSyncProgress(
+        token,
+        SyncProgress(
+          stage: 'Hashing local music',
+          path: raw['relativePath']?.toString(),
+          completedItems: entries.length,
+          totalItems: rawItems.length,
+          totalBytes: raw['size'] is int ? raw['size'] as int : null,
+        ),
+      );
       entries.add(
         await _entry(
           Map<Object?, Object?>.from(raw),
@@ -278,6 +288,7 @@ final class BrokerLocalSnapshotProvider implements LocalSnapshotProvider {
       token.throwIfCancelled();
       input.add(chunk);
       length += chunk.length;
+      reportSyncBytes(token, length, total: expectedLength);
     }
     input.close();
     if (length != expectedLength) {

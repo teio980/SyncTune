@@ -15,45 +15,48 @@ void main() {
     sha256: 'a' * 64,
   );
 
-  test('delete stops after catalog read when the root generation changes',
-      () async {
-    final catalog = _Catalog()..entries[path.value] = entry;
-    final delegate = _Store();
-    var reads = 0;
-    final store = CatalogRecordingLocalObjectStore(
-      delegate: delegate,
-      catalog: catalog,
-      activeRoot: () => ++reads >= 3 ? newRoot : oldRoot,
-    );
+  test(
+    'delete stops after catalog read when the root generation changes',
+    () async {
+      final catalog = _Catalog()..entries[path.value] = entry;
+      final delegate = _Store();
+      var reads = 0;
+      final store = CatalogRecordingLocalObjectStore(
+        delegate: delegate,
+        catalog: catalog,
+        activeRoot: () => ++reads >= 3 ? newRoot : oldRoot,
+      );
 
-    await expectLater(
-      store.delete(path, condition: LocalMatchSha256(entry.sha256!)),
-      throwsA(isA<NeedsRescan>()),
-    );
-    expect(delegate.deleteCalls, 0);
-  });
+      await expectLater(
+        store.delete(path, condition: LocalMatchSha256(entry.sha256!)),
+        throwsA(isA<NeedsRescan>()),
+      );
+      expect(delegate.deleteCalls, 0);
+    },
+  );
 
   test(
-      'favorite update stops after catalog read when the root generation changes',
-      () async {
-    final catalog = _Catalog()..entries[path.value] = entry;
-    final delegate = _Store();
-    var reads = 0;
-    final store = CatalogRecordingLocalObjectStore(
-      delegate: delegate,
-      catalog: catalog,
-      activeRoot: () => ++reads >= 3 ? newRoot : oldRoot,
-    );
+    'favorite update stops after catalog read when the root generation changes',
+    () async {
+      final catalog = _Catalog()..entries[path.value] = entry;
+      final delegate = _Store();
+      var reads = 0;
+      final store = CatalogRecordingLocalObjectStore(
+        delegate: delegate,
+        catalog: catalog,
+        activeRoot: () => ++reads >= 3 ? newRoot : oldRoot,
+      );
 
-    await expectLater(
-      store.updateFavorite(
-        path,
-        const FavoriteStamp(value: true, lamport: 1, deviceId: 'device'),
-      ),
-      throwsA(isA<NeedsRescan>()),
-    );
-    expect(catalog.favoriteWrites, 0);
-  });
+      await expectLater(
+        store.updateFavorite(
+          path,
+          const FavoriteStamp(value: true, lamport: 1, deviceId: 'device'),
+        ),
+        throwsA(isA<NeedsRescan>()),
+      );
+      expect(catalog.favoriteWrites, 0);
+    },
+  );
 }
 
 final class _Catalog implements CatalogEntryStore {
@@ -97,8 +100,7 @@ final class _Store implements LocalObjectStore {
   Future<Stream<List<int>>> read(
     SyncPath path, {
     CancellationToken token = const NeverCancelled(),
-  }) async =>
-      Stream<List<int>>.value(const <int>[1]);
+  }) async => Stream<List<int>>.value(const <int>[1]);
 
   @override
   Future<StagedObject> stage(
@@ -106,15 +108,13 @@ final class _Store implements LocalObjectStore {
     Stream<List<int>> content, {
     required String expectedSha256,
     CancellationToken token = const NeverCancelled(),
-  }) async =>
-      StagedObject(key: 'stage', sha256: expectedSha256, length: 1);
+  }) async => StagedObject(key: 'stage', sha256: expectedSha256, length: 1);
 
   @override
   Future<Stream<List<int>>> openStaged(
     StagedObject staged, {
     CancellationToken token = const NeverCancelled(),
-  }) async =>
-      Stream<List<int>>.value(const <int>[1]);
+  }) async => Stream<List<int>>.value(const <int>[1]);
 
   @override
   Future<bool> verifyStaged(
@@ -122,8 +122,7 @@ final class _Store implements LocalObjectStore {
     required String expectedSha256,
     required int expectedLength,
     CancellationToken token = const NeverCancelled(),
-  }) async =>
-      true;
+  }) async => true;
 
   @override
   Future<void> commitStaged(
@@ -138,6 +137,7 @@ final class _Store implements LocalObjectStore {
   Future<void> delete(
     SyncPath path, {
     required LocalCondition condition,
+    String? operationId,
     CancellationToken token = const NeverCancelled(),
   }) async {
     deleteCalls++;

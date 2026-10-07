@@ -5,8 +5,91 @@ import 'package:synctune_sync_core/synctune_sync_core.dart';
 
 import 'package:synctune/app/sync/sync_gate.dart';
 import 'package:synctune/infrastructure/runtime/foreground_sync_runtime.dart';
+import 'package:synctune/data/webdav_repository.dart';
 
 void main() {
+  test(
+    'publishes run-scoped file telemetry and ignores cancelled updates',
+    () async {
+      final pending = Completer<SyncRunResult>();
+      final runner = FakeRunner()..runResults.add(pending);
+      final runtime = ForegroundSyncRuntime(
+        targetPort: FakeTargetPort(_target('g1')),
+        runner: runner,
+      );
+      addTearDown(runtime.disposeAndWait);
+      final run = runtime.requestManual();
+      final outcome = expectLater(run, throwsA(isA<SyncCancelled>()));
+      await pumpRuntime();
+      final start = runtime.snapshot.lastStartedAtUtc;
+      final token = runner.cancellationTokens.single;
+      reportSyncProgress(
+        token,
+        const SyncProgress(
+          stage: 'Uploading',
+          path: 'song.mp3',
+          completedItems: 1,
+          totalItems: 2,
+          totalBytes: 100,
+        ),
+      );
+      reportSyncBytes(token, 100);
+      expect(runtime.snapshot.message, 'Uploading');
+      expect(runtime.snapshot.progress!.path, 'song.mp3');
+      expect(runtime.snapshot.progress!.completedBytes, 100);
+      expect(runtime.snapshot.lastStartedAtUtc, start);
+      final cancelling = runtime.cancel();
+      reportSyncBytes(token, 200);
+      expect(runtime.snapshot.phase, ForegroundRunPhase.cancelling);
+      pending.complete(successfulResult);
+      await cancelling;
+      await outcome;
+      expect(runtime.snapshot.phase, ForegroundRunPhase.cancelled);
+      expect(runtime.snapshot.progress!.completedBytes, 100);
+    },
+  );
+
+  test(
+    'failed automatic sync offers import but never adopts automatically',
+    () async {
+      final runner = _ImportRunner();
+      final runtime = ForegroundSyncRuntime(
+        targetPort: FakeTargetPort(_target('g1')),
+        runner: runner,
+      );
+      addTearDown(runtime.disposeAndWait);
+      runtime.start();
+      await pumpRuntime();
+      expect(runtime.snapshot.phase, ForegroundRunPhase.failed);
+      expect(runtime.snapshot.requiresRemoteImport, isTrue);
+      expect(runner.imports, 0);
+      await runtime.importCloudMusic();
+      expect(runner.imports, 1);
+      expect(runner.runs, 2);
+      expect(runtime.snapshot.phase, ForegroundRunPhase.succeeded);
+      expect(runtime.snapshot.requiresRemoteImport, isFalse);
+    },
+  );
+
+  test('import can be cancelled and a retry does not silently adopt', () async {
+    final runner = _ImportRunner()..pendingImport = Completer<void>();
+    final runtime = ForegroundSyncRuntime(
+      targetPort: FakeTargetPort(_target('g1')),
+      runner: runner,
+    );
+    addTearDown(runtime.disposeAndWait);
+    final operation = runtime.importCloudMusic();
+    final outcome = expectLater(operation, throwsA(isA<SyncCancelled>()));
+    await pumpRuntime();
+    final cancelling = runtime.cancel();
+    runner.pendingImport!.complete();
+    await cancelling;
+    await outcome;
+    expect(runtime.snapshot.phase, ForegroundRunPhase.cancelled);
+    expect(runner.runs, 0);
+    expect(runner.imports, 1);
+  });
+
   test(
     'starts once and schedules the next run after fifteen minutes',
     () async {
@@ -163,8 +246,8 @@ void main() {
       final runner = FakeRunner(
         gate: const SyncGateState(
           status: SyncGateStatus.unavailable,
-          title: '不可用',
-          message: '平台闸门未通过',
+          title: 'Unavailable',
+          message: 'Platform safety checks did not pass',
         ),
       );
       final runtime = ForegroundSyncRuntime(targetPort: target, runner: runner);
@@ -253,7 +336,7 @@ final class FakeRunner implements ConfirmedSyncRunner {
   FakeRunner({
     this.gate = const SyncGateState(
       status: SyncGateStatus.ready,
-      title: '可用',
+      title: 'Available',
       message: 'ready',
     ),
   });
@@ -301,6 +384,46 @@ final class FakeRunner implements ConfirmedSyncRunner {
 
 String? lastToken(List<String> values) =>
     values.isEmpty ? null : values[values.length - 1];
+
+final class _ImportRunner
+    implements ConfirmedSyncRunner, ExistingRemoteMusicImporter {
+  int imports = 0;
+  int runs = 0;
+  bool imported = false;
+  Completer<void>? pendingImport;
+
+  @override
+  Future<SyncGateState> check(
+    SyncRuntimeTarget target, {
+    CancellationToken token = const NeverCancelled(),
+  }) async => const SyncGateState(
+    status: SyncGateStatus.ready,
+    title: 'Ready',
+    message: 'Ready',
+  );
+
+  @override
+  Future<void> importCloudMusic(
+    SyncRuntimeTarget target, {
+    required CancellationToken token,
+  }) async {
+    imports++;
+    await pendingImport?.future;
+    token.throwIfCancelled();
+    imported = true;
+  }
+
+  @override
+  Future<SyncRunResult> run(
+    SyncRuntimeTarget target, {
+    required String runToken,
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    runs++;
+    if (!imported) throw RemoteMusicImportRequired(SyncPath.parse('song.mp3'));
+    return successfulResult;
+  }
+}
 
 final class FakeTimerFactory implements RuntimeTimerFactory {
   final List<FakeTimerHandle> handles = <FakeTimerHandle>[];

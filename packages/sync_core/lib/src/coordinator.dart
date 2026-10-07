@@ -62,6 +62,8 @@ final class SyncCoordinator {
       SyncClock clock = const SystemSyncClock(),
       CancellationToken token = const NeverCancelled()}) async {
     token.throwIfCancelled();
+    reportSyncProgress(
+        token, const SyncProgress(stage: 'Recovering previous sync'));
     final old = await baseline.load(root);
     token.throwIfCancelled();
     var recovered = plans == null ? null : await plans.loadUnfinishedPlan(root);
@@ -133,8 +135,31 @@ final class SyncCoordinator {
       );
       token.throwIfCancelled();
     }
+    if (recovered != null && local is LocalPlanRecovery) {
+      try {
+        await (local as LocalPlanRecovery).recoverPendingPlan(
+          root,
+          recovered,
+          journal: recoveredRecords,
+          token: token,
+        );
+      } on NeedsRescan catch (error) {
+        if (!_isRecoverableLocalDrift(error)) rethrow;
+        // The durable evidence no longer describes the live bytes. Keep the
+        // backup/conflict visible, retire the stale plan, and let the normal
+        // complete scan create a fresh plan instead of replaying forever.
+        await plans!.markPlanSuperseded(root, recovered.planId);
+        recovered = null;
+        recoveredRecords = const <JournalRecord>[];
+      }
+      token.throwIfCancelled();
+    }
+    reportSyncProgress(
+        token, const SyncProgress(stage: 'Scanning local music'));
     final localView = await localSnapshots.capture(root, token: token);
     token.throwIfCancelled();
+    reportSyncProgress(
+        token, const SyncProgress(stage: 'Scanning cloud music'));
     final remoteView = await remoteSnapshots.capture(root, token: token);
     token.throwIfCancelled();
     if (recovered != null) {
@@ -168,6 +193,7 @@ final class SyncCoordinator {
       token.throwIfCancelled();
       recovered = null;
     }
+    reportSyncProgress(token, const SyncProgress(stage: 'Planning sync'));
     final plan = recovered ??
         planner.plan(
             planId: planId,
@@ -204,14 +230,20 @@ final class SyncCoordinator {
           baselineConfirmed: false,
         );
       }
+      reportSyncProgress(
+          token, const SyncProgress(stage: 'Verifying local music'));
       final afterLocal = await localSnapshots.capture(root, token: token);
       token.throwIfCancelled();
+      reportSyncProgress(
+          token, const SyncProgress(stage: 'Verifying cloud music'));
       final afterRemote = await remoteSnapshots.capture(root, token: token);
       token.throwIfCancelled();
       if (_same(afterLocal, afterRemote) &&
           afterLocal.generation == root.generation &&
           afterRemote.generation == root.generation) {
         token.throwIfCancelled();
+        reportSyncProgress(
+            token, const SyncProgress(stage: 'Saving sync result'));
         await baseline.saveConfirmed(root, afterLocal, planId: plan.planId);
         token.throwIfCancelled();
         baselineConfirmed = true;
@@ -240,6 +272,28 @@ final class SyncCoordinator {
       }
     }
     return true;
+  }
+
+  bool _isRecoverableLocalDrift(NeedsRescan error) {
+    final text = error.reason.toString().toLowerCase();
+    const protectedSignals = <String>[
+      'root_changed',
+      'root_unavailable',
+      'root_revoked',
+      'recovery_evidence_missing',
+      'permission',
+      'authorized root',
+    ];
+    if (protectedSignals.any(text.contains)) return false;
+    const driftSignals = <String>[
+      'precondition',
+      'backup and target both exist',
+      'target missing',
+      'content verification failed',
+      'content changed',
+      'needsrescan',
+    ];
+    return driftSignals.any(text.contains);
   }
 
   bool _planStillCurrent(

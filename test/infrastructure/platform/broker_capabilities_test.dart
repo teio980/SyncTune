@@ -14,7 +14,7 @@ final class _CapabilitiesChannel implements BrokerMethodChannel {
 
 void main() {
   test(
-    'SAF capabilities expose conditional operations as unsupported',
+    'SAF recovery capabilities remain distinct from atomic CAS',
     () async {
       final capabilities = await MethodChannelBrokerCapabilities(
         channel: _CapabilitiesChannel(<String, Object?>{
@@ -22,15 +22,18 @@ void main() {
           'platform': 'android',
           'credentials': 'android_keystore_aes_gcm_app_private',
           'staging': 'persistent_after_finish_root_scoped',
-          'atomicCreate': 'unsupported_saf_provider',
-          'conditionalReplace': 'unsupported_saf_provider',
-          'conditionalDelete': 'unsupported_saf_provider',
+          'atomicCreate': 'verified_create_recovery',
+          'conditionalReplace': 'verified_backup_replace',
+          'conditionalDelete': 'verified_backup_delete',
           'temporaryPermission': 'not_verifiable',
         }),
       ).read();
       expect(capabilities.canCreateOnly, isFalse);
       expect(capabilities.canConditionalReplace, isFalse);
       expect(capabilities.canConditionalDelete, isFalse);
+      expect(capabilities.canVerifiedCreate, isTrue);
+      expect(capabilities.canVerifiedBackupReplace, isTrue);
+      expect(capabilities.canVerifiedBackupDelete, isTrue);
       expect(capabilities.staging, 'persistent_after_finish_root_scoped');
     },
   );

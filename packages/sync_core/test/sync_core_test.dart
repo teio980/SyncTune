@@ -33,6 +33,50 @@ RemoteSnapshot remote(Map<SyncPath, RemoteObject> entries,
         capturedAtUtc: now);
 
 void main() {
+  test('upload telemetry follows real planning and final confirmation',
+      () async {
+    const root = SyncRoot('root', generation: 'g1');
+    final path = SyncPath.parse('song.mp3');
+    final entry = file('song', path, 'a');
+    final baseline = FakeBaseline();
+    final repository = FakeRemote();
+    final token = _ProgressToken();
+    final result = await const SyncCoordinator().run(root,
+        planId: 'live-progress',
+        localSnapshots: SnapshotSequenceLocal([
+          local([entry]),
+          local([entry])
+        ]),
+        remoteSnapshots: SnapshotSequenceRemote([
+          remote({}),
+          remote({path: RemoteObject(entry: entry, etag: '"e1"')})
+        ]),
+        baseline: baseline,
+        local: FakeLocal(),
+        remote: repository,
+        journal: FakeJournal(),
+        token: token);
+    result.requireConfirmed();
+    expect(repository.putCalls, 1);
+    expect(baseline.saved!.entries[path]!.sha256, entry.sha256);
+    expect(token.events.map((event) => event.stage), [
+      'Recovering previous sync',
+      'Scanning local music',
+      'Scanning cloud music',
+      'Planning sync',
+      'Uploading',
+      'Updating favorites',
+      'File operations complete',
+      'Verifying local music',
+      'Verifying cloud music',
+      'Saving sync result'
+    ]);
+    final upload =
+        token.events.firstWhere((event) => event.stage == 'Uploading');
+    expect(upload.path, 'song.mp3');
+    expect(upload.totalItems, 2);
+  });
+
   const root = SyncRoot('root', generation: 'g1');
   test('path safety rejects ADS, aliases and wildcards but accepts COM1song',
       () {
@@ -77,7 +121,8 @@ void main() {
       p,
       'b',
       revision: 1,
-      favorite: const FavoriteStamp(value: false, lamport: 1, deviceId: 'server'),
+      favorite:
+          const FavoriteStamp(value: false, lamport: 1, deviceId: 'server'),
     );
     final merged = const ThreeWayMerger().merge(
       base: base,
@@ -344,6 +389,64 @@ void main() {
     );
     expect(plan.operations.single.kind, SyncOperationKind.deleteRemote);
     expect(plan.operations.single.condition, isA<MatchEtag>());
+  });
+  test('local delete journals recovery intent before touching the provider',
+      () async {
+    final path = SyncPath.parse('music/song.mp3');
+    final base = file('song', path, 'a');
+    final tombstone = SyncEntry.tombstone(
+      id: 'song',
+      path: path,
+      modifiedAtUtc: now,
+      revision: 1,
+    );
+    final plan = const SyncPlanner().plan(
+      planId: 'delete-local-execution',
+      root: root,
+      baseline: local([base]),
+      local: local([base]),
+      remote: remote({path: RemoteObject(entry: tombstone, etag: '"e2"')}),
+    );
+    final journal = FakeJournal();
+    final localStore = FakeLocal(currentSha256: base.sha256);
+    await const SyncExecutor().execute(
+      plan,
+      local: localStore,
+      remote: FakeRemote(),
+      journal: journal,
+    );
+
+    expect(localStore.deleteCalls, 1);
+    expect(journal.records.map((record) => record.state), [
+      JournalState.staged,
+      JournalState.committed,
+    ]);
+    expect(journal.records.first.condition, 'local-sha256:${base.sha256}');
+  });
+  test('local recovery drift supersedes the stale plan and replans', () async {
+    const stale = SyncPlan(
+      planId: 'stale-plan',
+      generation: 'g1',
+      operations: <SyncOperation>[],
+      deletionsSuppressed: false,
+    );
+    final localStore = FakeLocal(
+      recoveryError: const NeedsRescan('local precondition changed'),
+    );
+    final result = await const SyncCoordinator().run(
+      root,
+      planId: 'fresh-plan',
+      localSnapshots: SnapshotSequenceLocal([local([]), local([])]),
+      remoteSnapshots: SnapshotSequenceRemote([remote({}), remote({})]),
+      baseline: FakeBaseline(),
+      local: localStore,
+      remote: FakeRemote(),
+      journal: FakeJournal(),
+      plans: FakePlanStore(stale),
+    );
+
+    expect(result.plan.planId, 'fresh-plan');
+    expect(localStore.recoveryCalls, 1);
   });
   test('lost authorization pauses planning and weak ETags are rejected', () {
     final path = SyncPath.parse('music/song.mp3');
@@ -1038,6 +1141,18 @@ void main() {
   });
 }
 
+final class _ProgressToken implements CancellationToken, SyncProgressReporter {
+  final events = <SyncProgress>[];
+  @override
+  SyncProgress? get progress => events.isEmpty ? null : events.last;
+  @override
+  bool get isCancelled => false;
+  @override
+  void throwIfCancelled() {}
+  @override
+  void reportProgress(SyncProgress progress) => events.add(progress);
+}
+
 final class SnapshotSequenceLocal implements LocalSnapshotProvider {
   SnapshotSequenceLocal(this.views);
   final List<SyncSnapshot> views;
@@ -1069,18 +1184,34 @@ final class FakeBaseline implements BaselineStore {
   }
 }
 
-final class FakeLocal implements LocalObjectStore {
+final class FakeLocal implements LocalObjectStore, LocalPlanRecovery {
   FakeLocal(
       {this.reportWrongHash = false,
       this.currentSha256,
-      this.verifyStagedResult = true});
+      this.verifyStagedResult = true,
+      this.recoveryError});
   final bool reportWrongHash;
   final String? currentSha256;
   final bool verifyStagedResult;
+  final Object? recoveryError;
+  int recoveryCalls = 0;
   SyncEntry? committedEntry;
   int commitCalls = 0;
   final List<FavoriteStamp> favoriteWrites = [];
   int stageCalls = 0;
+  int deleteCalls = 0;
+  @override
+  Future<void> recoverPendingPlan(
+    SyncRoot root,
+    SyncPlan plan, {
+    required Iterable<JournalRecord> journal,
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    recoveryCalls++;
+    final error = recoveryError;
+    if (error != null) throw error;
+  }
+
   @override
   Future<Stream<List<int>>> read(SyncPath path,
           {CancellationToken token = const NeverCancelled()}) async =>
@@ -1120,7 +1251,9 @@ final class FakeLocal implements LocalObjectStore {
   @override
   Future<void> delete(SyncPath path,
       {required LocalCondition condition,
+      String? operationId,
       CancellationToken token = const NeverCancelled()}) async {
+    deleteCalls++;
     if (condition is LocalMatchSha256 && condition.sha256 != currentSha256) {
       throw NeedsRescan('local object changed before delete');
     }

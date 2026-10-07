@@ -44,6 +44,25 @@ final class SyncExecutor {
     final failed = <String, Object>{};
     for (final op in plan.operations) {
       token.throwIfCancelled();
+      reportSyncProgress(
+          token,
+          SyncProgress(
+              stage: switch (op.kind) {
+                SyncOperationKind.putLocalToRemote => 'Uploading',
+                SyncOperationKind.putRemoteToLocal => 'Downloading',
+                SyncOperationKind.deleteLocal => 'Deleting local file',
+                SyncOperationKind.deleteRemote => 'Deleting cloud file',
+                SyncOperationKind.conflict => 'Preserving conflicting files',
+                _ => 'Updating favorites',
+              },
+              path: op.path.value,
+              completedItems: done.length + skipped.length,
+              itemLabel: 'Operations completed',
+              totalItems: plan.operations.length,
+              totalBytes: op.kind == SyncOperationKind.putLocalToRemote ||
+                      op.kind == SyncOperationKind.putRemoteToLocal
+                  ? op.source?.size
+                  : null));
       if (committed.contains(op.id)) {
         skipped.add(op.id);
         continue;
@@ -70,6 +89,13 @@ final class SyncExecutor {
         throw NeedsRescan(e);
       }
     }
+    reportSyncProgress(
+        token,
+        SyncProgress(
+            stage: 'File operations complete',
+            completedItems: done.length + skipped.length,
+            itemLabel: 'Operations completed',
+            totalItems: plan.operations.length));
     return ExecutionReport(
         completed: List.unmodifiable(done),
         skipped: List.unmodifiable(skipped),
@@ -178,7 +204,8 @@ final class SyncExecutor {
                 atUtc: clock.nowUtc,
                 stagingKey: staged.key,
                 sha256: staged.sha256,
-                length: staged.length));
+                length: staged.length,
+                condition: op.localCondition?.fingerprint));
           }
           final localCondition = op.localCondition;
           if (localCondition == null) {
@@ -221,7 +248,22 @@ final class SyncExecutor {
         if (localCondition is! LocalMatchSha256) {
           throw NeedsRescan('missing local delete hash');
         }
-        await local.delete(op.path, condition: localCondition, token: token);
+        if (checkpoints[op.id]?.state != JournalState.staged) {
+          final intent = JournalRecord(
+            planId: plan.planId,
+            generation: plan.generation,
+            operationId: op.id,
+            path: op.path,
+            state: JournalState.staged,
+            atUtc: clock.nowUtc,
+            condition: localCondition.fingerprint,
+          );
+          await journal.append(intent);
+          checkpoints[op.id] = intent;
+          token.throwIfCancelled();
+        }
+        await local.delete(op.path,
+            condition: localCondition, operationId: op.id, token: token);
       case SyncOperationKind.updateFavoriteToRemote:
         if (op.condition == null || op.source == null) {
           throw NeedsRescan('missing metadata ETag');
@@ -350,10 +392,10 @@ final class SyncExecutor {
     }
 
     Future<void> commitStep(
-      String step,
-      SyncPath targetPath,
-      Future<void> Function() commit,
-    ) async {
+        String step, SyncPath targetPath, Future<void> Function() commit,
+        {StagedObject? staged,
+        SyncEntry? entry,
+        LocalCondition? condition}) async {
       final checkpointId = conflictCheckpointId(op, step);
       if (checkpoints[checkpointId]?.state == JournalState.committed) return;
       if (checkpoints[checkpointId]?.state != JournalState.staged) {
@@ -364,6 +406,10 @@ final class SyncExecutor {
           path: targetPath,
           state: JournalState.staged,
           atUtc: clock.nowUtc,
+          stagingKey: staged?.key,
+          sha256: staged?.sha256,
+          length: staged?.length,
+          condition: condition?.fingerprint,
         );
         await journal.append(intent);
         checkpoints[checkpointId] = intent;
@@ -377,6 +423,10 @@ final class SyncExecutor {
         path: targetPath,
         state: JournalState.committed,
         atUtc: clock.nowUtc,
+        stagingKey: staged?.key,
+        sha256: staged?.sha256,
+        length: staged?.length,
+        condition: condition?.fingerprint,
       );
       await journal.append(record);
       checkpoints[checkpointId] = record;
@@ -417,6 +467,9 @@ final class SyncExecutor {
           condition: const LocalCreateOnly(),
           token: token,
         ),
+        staged: secondaryStage,
+        entry: secondary,
+        condition: const LocalCreateOnly(),
       );
       await commitStep(
         'remote-primary',
@@ -493,6 +546,9 @@ final class SyncExecutor {
         condition: const LocalCreateOnly(),
         token: token,
       ),
+      staged: secondaryStage,
+      entry: secondary,
+      condition: const LocalCreateOnly(),
     );
     await commitStep(
       'remote-preserve',
@@ -518,6 +574,9 @@ final class SyncExecutor {
         condition: localCondition,
         token: token,
       ),
+      staged: primaryStage,
+      entry: primary,
+      condition: localCondition,
     );
   }
 

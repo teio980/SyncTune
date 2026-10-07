@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:synctune_sync_core/synctune_sync_core.dart';
 
 import '../../app/sync/sync_gate.dart';
+import 'sync_failure_message.dart';
 
 /// The identity captured by one foreground run. A changed root generation or
 /// composition epoch makes the in-flight run stale before its result is used.
@@ -47,6 +48,13 @@ abstract interface class ConfirmedSyncRunner {
     SyncRuntimeTarget target, {
     required String runToken,
     CancellationToken token = const NeverCancelled(),
+  });
+}
+
+abstract interface class ExistingRemoteMusicImporter {
+  Future<void> importCloudMusic(
+    SyncRuntimeTarget target, {
+    required CancellationToken token,
   });
 }
 
@@ -131,7 +139,19 @@ abstract interface class ForegroundLifecyclePort {
 /// A cancellation source that can be passed directly to sync_core and
 /// observed by platform/transport adapters at every I/O boundary.
 final class RuntimeCancellationSource
-    implements CancellationToken, CancellationSignal {
+    implements CancellationToken, CancellationSignal, SyncProgressReporter {
+  RuntimeCancellationSource({this.onProgress});
+  final void Function(SyncProgress progress)? onProgress;
+  SyncProgress? _progress;
+  @override
+  SyncProgress? get progress => _progress;
+  @override
+  void reportProgress(SyncProgress progress) {
+    if (_cancelled) return;
+    _progress = progress;
+    onProgress?.call(progress);
+  }
+
   final StreamController<void> _controller = StreamController<void>.broadcast();
   bool _cancelled = false;
 
@@ -175,7 +195,7 @@ final class SyncRuntimeNotReady implements Exception {
 /// Foreground-only scheduler for startup, resume, manual and 15-minute work.
 /// It never promises execution while the app is paused or closed.
 final class ForegroundSyncRuntime
-    implements SyncRuntimePort, SyncRuntimeControls {
+    implements SyncRuntimePort, SyncRuntimeControls, RemoteMusicImportControls {
   ForegroundSyncRuntime({
     required this.targetPort,
     required this.runner,
@@ -244,7 +264,7 @@ final class ForegroundSyncRuntime
     // second request.
     _started = true;
     _pending = false;
-    unawaited(_safeRequest('启动'));
+    unawaited(_safeRequest('Startup'));
   }
 
   @override
@@ -264,7 +284,7 @@ final class ForegroundSyncRuntime
       _publish(
         const ForegroundRuntimeSnapshot(
           phase: ForegroundRunPhase.blocked,
-          message: '尚未授权同步根目录',
+          message: 'Sync root folder access required',
         ),
       );
       return const SyncGateState.unavailable();
@@ -278,14 +298,14 @@ final class ForegroundSyncRuntime
         return const SyncGateState.unavailable();
       }
       return gate;
-    } catch (_) {
+    } catch (error) {
       if (_disposed || epoch != _epoch) {
         return const SyncGateState.unavailable();
       }
-      return const SyncGateState(
+      return SyncGateState(
         status: SyncGateStatus.failed,
-        title: '同步条件检查失败',
-        message: '请检查连接和授权后重试。',
+        title: 'Sync requirements check failed',
+        message: syncFailureMessage(error),
       );
     } finally {
       _checks.remove(source);
@@ -296,19 +316,31 @@ final class ForegroundSyncRuntime
   @override
   Future<void> run() {
     if (_disposed || !_foreground) return _cancelledRequest();
-    return _request('手动');
+    return _request('Manual');
   }
 
   @override
   Future<void> requestManual() {
     if (_disposed || !_foreground) return _cancelledRequest();
-    return _request('手动');
+    return _request('Manual');
   }
 
   @override
   Future<void> retry() {
     if (_disposed || !_foreground) return _cancelledRequest();
-    return _request('重试');
+    return _request('Retry');
+  }
+
+  @override
+  Future<void> importCloudMusic() {
+    if (_disposed || !_foreground) return _cancelledRequest();
+    // An explicit import must not be silently coalesced into a normal run.
+    if (_activeRun != null) {
+      return Future<void>.error(
+        const SyncRuntimeNotReady('Sync is running. Please wait.'),
+      );
+    }
+    return _request('Import cloud music');
   }
 
   Future<void> _cancelledRequest() => Future<void>.error(const SyncCancelled());
@@ -326,7 +358,7 @@ final class ForegroundSyncRuntime
       _publish(
         const ForegroundRuntimeSnapshot(
           phase: ForegroundRunPhase.cancelled,
-          message: '同步已取消',
+          message: 'Sync canceled',
         ),
       );
       return;
@@ -334,7 +366,7 @@ final class ForegroundSyncRuntime
     _publish(
       ForegroundRuntimeSnapshot(
         phase: ForegroundRunPhase.cancelling,
-        message: '正在取消同步',
+        message: 'Canceling sync',
         runToken: _snapshot.runToken,
         lastStartedAtUtc: _snapshot.lastStartedAtUtc,
       ),
@@ -351,7 +383,7 @@ final class ForegroundSyncRuntime
     if (_disposed) return;
     _foreground = true;
     _schedule();
-    unawaited(_safeRequest('恢复'));
+    unawaited(_safeRequest('Resume'));
   }
 
   void onPause() {
@@ -364,7 +396,8 @@ final class ForegroundSyncRuntime
       _publish(
         const ForegroundRuntimeSnapshot(
           phase: ForegroundRunPhase.idle,
-          message: '应用已挂起，等待恢复后同步',
+          message:
+              'The app is suspended. Sync will resume when the app returns.',
         ),
       );
     }
@@ -456,7 +489,7 @@ final class ForegroundSyncRuntime
       _pending = false;
       final pending = _pendingBatch;
       _pendingBatch = null;
-      final next = _beginRun('合并请求');
+      final next = _beginRun('Combined request');
       if (pending == null) {
         unawaited(_safeAwait(next));
       } else {
@@ -496,21 +529,53 @@ final class ForegroundSyncRuntime
       _publish(
         const ForegroundRuntimeSnapshot(
           phase: ForegroundRunPhase.blocked,
-          message: '尚未授权同步根目录',
+          message: 'Sync root folder access required',
         ),
       );
-      throw const SyncRuntimeNotReady('尚未授权同步根目录');
+      throw const SyncRuntimeNotReady('Sync root folder access required');
     }
     final epoch = _epoch;
     final runToken = _tokenGenerator.newRunToken(_sessionId, ++_sequence);
-    final source = RuntimeCancellationSource();
+    final startedAt = _clock.nowUtc;
+    DateTime? lastPublishedAt;
+    SyncProgress? lastPublished;
+    final source = RuntimeCancellationSource(
+      onProgress: (progress) {
+        if (_disposed || epoch != _epoch || !_sameTarget(target)) return;
+        final now = _clock.nowUtc;
+        final sameTask =
+            lastPublished?.stage == progress.stage &&
+            lastPublished?.path == progress.path &&
+            lastPublished?.completedItems == progress.completedItems;
+        // Bound widget rebuilds while still emitting every stage/file boundary.
+        if (sameTask &&
+            lastPublishedAt != null &&
+            now.difference(lastPublishedAt!) <
+                const Duration(milliseconds: 100) &&
+            progress.completedBytes != progress.totalBytes) {
+          return;
+        }
+        lastPublished = progress;
+        lastPublishedAt = now;
+        _publish(
+          ForegroundRuntimeSnapshot(
+            phase: ForegroundRunPhase.running,
+            message: progress.stage,
+            runToken: runToken,
+            lastStartedAtUtc: startedAt,
+            lastProgressAtUtc: now,
+            progress: progress,
+          ),
+        );
+      },
+    );
     _source = source;
     _publish(
       ForegroundRuntimeSnapshot(
         phase: ForegroundRunPhase.checking,
-        message: '正在检查同步条件',
+        message: 'Checking sync requirements',
         runToken: runToken,
-        lastStartedAtUtc: _clock.nowUtc,
+        lastStartedAtUtc: startedAt,
       ),
     );
     try {
@@ -522,7 +587,7 @@ final class ForegroundSyncRuntime
             phase: ForegroundRunPhase.blocked,
             message: gate.message,
             runToken: runToken,
-            lastStartedAtUtc: _clock.nowUtc,
+            lastStartedAtUtc: startedAt,
           ),
         );
         throw SyncRuntimeNotReady(gate.message);
@@ -530,11 +595,32 @@ final class ForegroundSyncRuntime
       _publish(
         ForegroundRuntimeSnapshot(
           phase: ForegroundRunPhase.running,
-          message: '正在同步',
+          message: reason == 'Import cloud music'
+              ? 'Importing cloud music'
+              : 'Syncing',
           runToken: runToken,
-          lastStartedAtUtc: _clock.nowUtc,
+          lastStartedAtUtc: startedAt,
         ),
       );
+      if (reason == 'Import cloud music') {
+        final importer = runner;
+        if (importer is! ExistingRemoteMusicImporter) {
+          throw const SyncRuntimeNotReady('Cloud music import is unavailable.');
+        }
+        await (importer as ExistingRemoteMusicImporter).importCloudMusic(
+          target,
+          token: source,
+        );
+        _ensureCurrent(epoch, target, source);
+        _publish(
+          ForegroundRuntimeSnapshot(
+            phase: ForegroundRunPhase.running,
+            message: 'Syncing',
+            runToken: runToken,
+            lastStartedAtUtc: startedAt,
+          ),
+        );
+      }
       final result = await runner.run(
         target,
         runToken: runToken,
@@ -545,9 +631,10 @@ final class ForegroundSyncRuntime
       _publish(
         ForegroundRuntimeSnapshot(
           phase: ForegroundRunPhase.succeeded,
-          message: '同步已完成',
+          message: 'Sync complete',
           runToken: runToken,
-          lastStartedAtUtc: _clock.nowUtc,
+          lastStartedAtUtc: startedAt,
+          progress: source.progress,
         ),
       );
     } catch (error) {
@@ -558,9 +645,10 @@ final class ForegroundSyncRuntime
         _publish(
           ForegroundRuntimeSnapshot(
             phase: ForegroundRunPhase.cancelled,
-            message: '同步已取消',
+            message: 'Sync canceled',
             runToken: runToken,
-            lastStartedAtUtc: _clock.nowUtc,
+            lastStartedAtUtc: startedAt,
+            progress: source.progress,
           ),
         );
         if (error is SyncCancelled) {
@@ -568,17 +656,25 @@ final class ForegroundSyncRuntime
         }
         throw const SyncCancelled();
       } else if (error is SyncRuntimeNotReady) {
-        // The blocked snapshot already carries the gate's readable reason.
-        // Preserve that state while allowing an awaited manual call to let
-        // its gate view model handle the failed request.
+        _publish(
+          ForegroundRuntimeSnapshot(
+            phase: ForegroundRunPhase.blocked,
+            message: error.message,
+            runToken: runToken,
+            lastStartedAtUtc: startedAt,
+            progress: source.progress,
+          ),
+        );
         rethrow;
       } else {
         _publish(
           ForegroundRuntimeSnapshot(
             phase: ForegroundRunPhase.failed,
-            message: '同步未完成，请检查连接后重试。',
+            message: syncFailureMessage(error),
+            requiresRemoteImport: needsRemoteMusicImport(error),
             runToken: runToken,
-            lastStartedAtUtc: _clock.nowUtc,
+            lastStartedAtUtc: startedAt,
+            progress: source.progress,
           ),
         );
         rethrow;
@@ -613,7 +709,7 @@ final class ForegroundSyncRuntime
       _publish(
         const ForegroundRuntimeSnapshot(
           phase: ForegroundRunPhase.cancelling,
-          message: '目录或连接设置已变化，正在取消旧同步',
+          message: 'Folder or connection settings changed. Canceling the previous sync.',
         ),
       );
     }
@@ -626,12 +722,12 @@ final class ForegroundSyncRuntime
       _publish(
         const ForegroundRuntimeSnapshot(
           phase: ForegroundRunPhase.blocked,
-          message: '尚未授权同步根目录',
+          message: 'Sync root folder access required',
         ),
       );
     } else if (_foreground && _started) {
       if (_activeRun == null) {
-        final request = _request('目录或连接设置已变化');
+        final request = _request('Folder or connection settings changed');
         unawaited(_safeAwait(request));
       } else {
         _pending = true;
@@ -666,14 +762,14 @@ final class ForegroundSyncRuntime
     _timer?.cancel();
     _timer = _timers.schedule(interval, () {
       _timer = null;
-      unawaited(_safeRequest('定时'));
+      unawaited(_safeRequest('Scheduled'));
     });
     if (_snapshot.phase == ForegroundRunPhase.idle ||
         _snapshot.phase == ForegroundRunPhase.scheduled) {
       _publish(
         ForegroundRuntimeSnapshot(
           phase: ForegroundRunPhase.scheduled,
-          message: '前台等待下一次同步',
+          message: 'Waiting for the next foreground sync',
           runToken: _snapshot.runToken,
           lastStartedAtUtc: _snapshot.lastStartedAtUtc,
         ),

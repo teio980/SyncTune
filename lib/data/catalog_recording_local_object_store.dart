@@ -9,7 +9,8 @@ import 'broker_local_snapshot_provider.dart';
 /// commit succeeds, and records a tombstone after a conditional local delete.
 /// A root switch between the operation and catalog write stops the run rather
 /// than attributing the result to a different authorization generation.
-final class CatalogRecordingLocalObjectStore implements LocalObjectStore {
+final class CatalogRecordingLocalObjectStore
+    implements LocalObjectStore, LocalPlanRecovery {
   CatalogRecordingLocalObjectStore({
     required this.delegate,
     required this.catalog,
@@ -90,6 +91,7 @@ final class CatalogRecordingLocalObjectStore implements LocalObjectStore {
   Future<void> delete(
     SyncPath path, {
     required LocalCondition condition,
+    String? operationId,
     CancellationToken token = const NeverCancelled(),
   }) async {
     final pinned = activeRoot();
@@ -99,7 +101,12 @@ final class CatalogRecordingLocalObjectStore implements LocalObjectStore {
     if (previous == null || previous.isDeleted) {
       throw NeedsRescan('local delete has no catalog identity for $path');
     }
-    await delegate.delete(path, condition: condition, token: token);
+    await delegate.delete(
+      path,
+      condition: condition,
+      operationId: operationId,
+      token: token,
+    );
     _ensurePinned(pinned, token);
     await catalog.rememberEntry(
       pinned,
@@ -112,6 +119,56 @@ final class CatalogRecordingLocalObjectStore implements LocalObjectStore {
       ),
     );
     _ensurePinned(pinned, token);
+  }
+
+  @override
+  Future<void> recoverPendingPlan(
+    SyncRoot root,
+    SyncPlan plan, {
+    required Iterable<JournalRecord> journal,
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    final recovery = delegate is LocalPlanRecovery
+        ? delegate as LocalPlanRecovery
+        : null;
+    if (recovery == null) return;
+    final pinned = activeRoot();
+    _ensurePinned(pinned, token);
+    await recovery.recoverPendingPlan(
+      root,
+      plan,
+      journal: journal,
+      token: token,
+    );
+    _ensurePinned(pinned, token);
+    final latest = <String, JournalRecord>{
+      for (final record in journal) record.operationId: record,
+    };
+    for (final operation in plan.operations) {
+      token.throwIfCancelled();
+      final record = latest[operation.id];
+      if (record?.state != JournalState.staged) continue;
+      if (operation.kind == SyncOperationKind.putRemoteToLocal &&
+          operation.source != null) {
+        await catalog.rememberEntry(pinned, operation.source!);
+      } else if (operation.kind == SyncOperationKind.deleteLocal &&
+          operation.localCondition is LocalMatchSha256) {
+        final previous = await catalog.loadCatalogEntry(pinned, operation.path);
+        if (previous != null && !previous.isDeleted) {
+          await catalog.rememberEntry(
+            pinned,
+            SyncEntry.tombstone(
+              id: previous.id,
+              path: operation.path,
+              modifiedAtUtc: _nowUtc(),
+              revision: previous.revision + 1,
+              favorite: previous.favorite,
+            ),
+          );
+        }
+      }
+      _ensurePinned(pinned, token);
+    }
   }
 
   @override

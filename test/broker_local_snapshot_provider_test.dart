@@ -81,6 +81,7 @@ final class _HashObjects implements LocalObjectStore {
   Future<void> delete(
     SyncPath path, {
     required LocalCondition condition,
+    String? operationId,
     CancellationToken token = const NeverCancelled(),
   }) => throw UnimplementedError();
 
