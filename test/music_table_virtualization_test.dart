@@ -117,7 +117,7 @@ void main() {
           .first,
     );
     expect(favorite.onPressed, isNull);
-    expect(find.text('收藏功能将在本地元数据服务连接后启用。'), findsOneWidget);
+    expect(favorite.tooltip, '收藏服务尚未连接');
     await tester.binding.setSurfaceSize(null);
   });
 

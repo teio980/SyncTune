@@ -1,12 +1,17 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:sqlite3/sqlite3.dart';
+import 'package:dio/dio.dart';
 
 import 'app/app.dart';
 import 'infrastructure/composition/synctune_composition.dart';
+import 'infrastructure/network/windows_winrt_http_adapter.dart';
+import 'infrastructure/platform/broker_local_object_store.dart';
 
 const _probeChannel = MethodChannel('synctune/probe');
 Map<String, Object?> _jsonMap(Map<Object?, Object?> value) {
@@ -31,11 +36,28 @@ Future<File?> _evidenceFile() async {
   if (dbPath == null || dbPath.isEmpty) return null;
   final process = await _processInfo();
   final pid = process['pid'] ?? 'unknown';
-  return File('${File(dbPath).parent.path}\\synctune-probe-results-$pid.json');
+  return File(
+    '${File(dbPath).parent.path}${Platform.pathSeparator}'
+    'synctune-probe-results-$pid.json',
+  );
 }
 
 Future<void> _evidenceWriteQueue = Future<void>.value();
 bool _evidenceInitialized = false;
+Future<String>? _startupProbeInFlight;
+
+Future<String> _runStartupProbeSingleFlight() {
+  final existing = _startupProbeInFlight;
+  if (existing != null) return existing;
+  late final Future<String> operation;
+  operation = _runStartupProbe().whenComplete(() {
+    if (identical(_startupProbeInFlight, operation)) {
+      _startupProbeInFlight = null;
+    }
+  });
+  _startupProbeInFlight = operation;
+  return operation;
+}
 
 Future<void> _saveEvidence(
   String key,
@@ -79,6 +101,34 @@ Future<String> _runStartupProbe() async {
   } catch (error) {
     evidence['processError'] = '$error';
   }
+
+  try {
+    final raw = await _probeChannel.invokeMethod<Object?>('brokerCapabilities');
+    if (raw is! Map) {
+      throw StateError('Broker capability response was not a map');
+    }
+    final capabilities = _jsonMap(raw.cast<Object?, Object?>());
+    evidence['brokerCapabilities'] = capabilities;
+    messages.add('Broker capabilities: ${capabilities['status'] ?? 'failed'}');
+  } on PlatformException catch (error) {
+    evidence['brokerCapabilities'] = <String, Object?>{
+      'status': 'failed',
+      'error': error.message ?? error.code,
+    };
+    messages.add('Broker capabilities: failed (${error.message})');
+  } on MissingPluginException catch (error) {
+    evidence['brokerCapabilities'] = <String, Object?>{
+      'status': 'not-run',
+      'reason': '$error',
+    };
+    messages.add('Broker capabilities: unavailable on this platform');
+  } catch (error) {
+    evidence['brokerCapabilities'] = <String, Object?>{
+      'status': 'failed',
+      'error': '$error',
+    };
+    messages.add('Broker capabilities: failed ($error)');
+  }
   try {
     final dbPath = await _probeChannel.invokeMethod<String>(
       'privateDatabasePath',
@@ -121,33 +171,70 @@ Future<String> _runStartupProbe() async {
     };
     messages.add('SQLite private file: failed ($error)');
   }
-
   try {
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 10);
-    try {
-      final request = await client.getUrl(Uri.parse('https://example.com'));
-      final response = await request.close().timeout(
-        const Duration(seconds: 15),
-      );
-      final passed = response.statusCode >= 200 && response.statusCode < 300;
-      messages.add('Network: HTTP ${response.statusCode}');
-      evidence['https'] = <String, Object?>{
-        'status': passed ? 'passed' : 'failed',
-        'httpStatus': response.statusCode,
-      };
-      await response.drain<void>().timeout(const Duration(seconds: 5));
-    } finally {
-      client.close(force: true);
+    if (Platform.isWindows) {
+      final client =
+          Dio(
+              BaseOptions(
+                connectTimeout: const Duration(seconds: 10),
+                receiveTimeout: const Duration(seconds: 15),
+                followRedirects: false,
+                maxRedirects: 0,
+                responseType: ResponseType.bytes,
+              ),
+            )
+            ..httpClientAdapter = WindowsWinRtHttpAdapter(
+              channel: const FlutterBrokerMethodChannel(_probeChannel),
+            );
+      try {
+        final response = await client
+            .get<Object?>('https://example.com')
+            .timeout(const Duration(seconds: 20));
+        final status = response.statusCode;
+        messages.add(
+          status == null ? 'Network: failed' : 'Network: HTTP $status',
+        );
+        final network = <String, Object?>{
+          'status': status != null && status >= 200 && status < 300
+              ? 'passed'
+              : 'failed',
+          'transport': 'dio_winrt_http',
+        };
+        if (status != null) network['httpStatus'] = status;
+        evidence['https'] = network;
+      } finally {
+        client.close(force: true);
+      }
+    } else {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 10);
+      try {
+        final request = await client.getUrl(Uri.parse('https://example.com'));
+        final response = await request.close().timeout(
+          const Duration(seconds: 15),
+        );
+        final passed = response.statusCode >= 200 && response.statusCode < 300;
+        messages.add('Network: HTTP ${response.statusCode}');
+        evidence['https'] = <String, Object?>{
+          'status': passed ? 'passed' : 'failed',
+          'httpStatus': response.statusCode,
+          'transport': 'dart_io_http_client',
+        };
+        await response.drain<void>().timeout(const Duration(seconds: 5));
+      } finally {
+        client.close(force: true);
+      }
     }
   } catch (error) {
     evidence['https'] = <String, Object?>{
       'status': 'failed',
+      'transport': Platform.isWindows
+          ? 'dio_winrt_http'
+          : 'dart_io_http_client',
       'error': '$error',
     };
     messages.add('Network: failed ($error)');
   }
-
   try {
     final credential = await _probeChannel.invokeMethod<Map<Object?, Object?>>(
       'credentialRoundTrip',
@@ -171,7 +258,6 @@ Future<String> _runStartupProbe() async {
     };
     messages.add('Credential Locker: unavailable on this platform');
   }
-
   try {
     final restored = await _probeChannel
         .invokeMethod<Map<Object?, Object?>>('restoreFolder')
@@ -241,7 +327,8 @@ Future<String> _pickFolder() async {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final composition = await SyncTuneComposition.production();
+  const channel = FlutterBrokerMethodChannel();
+  final composition = await SyncTuneComposition.production(channel: channel);
   runApp(
     composition.provide(
       SyncTuneShell(
@@ -253,6 +340,18 @@ Future<void> main() async {
       ),
     ),
   );
+  // Keep the evidence current for the foreground scheduler.  The diagnostics
+  // page can still be opened later to create the first marker for a root.
+  unawaited(() async {
+    try {
+      await _runStartupProbeSingleFlight();
+      // The scheduler may have checked before evidence became available. A
+      // completed probe triggers one coalesced foreground check/run now.
+      await composition.runtime.requestManual();
+    } catch (_) {
+      // The runtime publishes a blocked/failed state for the next check.
+    }
+  }());
 }
 
 class ProbeApp extends StatefulWidget {
@@ -271,7 +370,7 @@ class _ProbeAppState extends State<ProbeApp> {
   @override
   void initState() {
     super.initState();
-    _runStartupProbe().then((value) {
+    _runStartupProbeSingleFlight().then((value) {
       if (mounted) {
         setState(() {
           _startup = value;
@@ -284,21 +383,31 @@ class _ProbeAppState extends State<ProbeApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      locale: Localizations.maybeLocaleOf(context) ?? const Locale('en'),
+      supportedLocales: SyncTuneStrings.supportedLocales,
+      localizationsDelegates: const [
+        SyncTuneStrings.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       title: 'SyncTune AppContainer Probe',
       theme: ThemeData(colorSchemeSeed: const Color(0xFF4F46E5)),
       home: Scaffold(
-        appBar: AppBar(title: const Text('SyncTune AppContainer Probe')),
+        appBar: AppBar(
+          title: const LocalizedText('SyncTune AppContainer Probe'),
+        ),
         body: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              const LocalizedText(
                 'Flutter packaged classic AppContainer capability check',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 16),
-              SelectableText(_startup),
+              SelectableText(SyncTuneStrings.of(context).text(_startup)),
               const SizedBox(height: 24),
               FilledButton.icon(
                 onPressed: _folderBusy || _startupBusy
@@ -316,10 +425,10 @@ class _ProbeAppState extends State<ProbeApp> {
                         }
                       },
                 icon: const Icon(Icons.folder_open),
-                label: const Text('Choose authorized folder'),
+                label: const LocalizedText('Choose authorized folder'),
               ),
               const SizedBox(height: 12),
-              SelectableText(_folder),
+              SelectableText(SyncTuneStrings.of(context).text(_folder)),
             ],
           ),
         ),

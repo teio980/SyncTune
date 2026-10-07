@@ -30,7 +30,7 @@ void main() {
 
     await tester.tap(find.text('撤销目录授权'));
     await tester.pump();
-    expect(find.text('目录撤销失败，当前授权仍保持。'), findsOneWidget);
+    expect(find.text('授权撤销失败，当前授权仍有效。'), findsOneWidget);
     expect(find.text('音乐根目录已授权'), findsOneWidget);
 
     success = true;
@@ -50,7 +50,7 @@ void main() {
     await tester.tap(find.text('选择音乐根目录'));
     await tester.pump();
 
-    expect(find.text('当前平台未提供撤销服务。'), findsOneWidget);
+    expect(find.text('当前平台不支持撤销授权。'), findsOneWidget);
     final revoke = tester.widget<OutlinedButton>(
       find.widgetWithText(OutlinedButton, '撤销目录授权'),
     );

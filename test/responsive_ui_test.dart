@@ -30,7 +30,7 @@ void main() {
       ]) {
         await tester.tap(find.byIcon(icon).first);
         await tester.pump();
-        expect(tester.takeException(), isNull);
+        expect(tester.takeException(), isNull, reason: 'Module icon: $icon');
       }
       await tester.binding.setSurfaceSize(null);
     });
@@ -41,13 +41,18 @@ void main() {
   ) async {
     await tester.pumpWidget(
       const ProviderScope(
-        child: SyncTuneShell(initializationMessage: '本地数据服务初始化失败'),
+        child: SyncTuneShell(
+          initializationMessage: 'Local data service initialization failed',
+        ),
       ),
     );
     await tester.pump();
 
     expect(find.text('本地服务初始化未完成'), findsOneWidget);
-    expect(find.text('本地数据服务初始化失败'), findsOneWidget);
+    expect(
+      find.text('Local data service initialization failed'),
+      findsOneWidget,
+    );
   });
 
   for (final platform in <TargetPlatform>[
@@ -65,8 +70,11 @@ void main() {
             home: Scaffold(
               body: Wrap(
                 children: [
-                  FilledButton(onPressed: () {}, child: const Text('填充')),
-                  OutlinedButton(onPressed: () {}, child: const Text('描边')),
+                  FilledButton(onPressed: () {}, child: const Text('Filled')),
+                  OutlinedButton(
+                    onPressed: () {},
+                    child: const Text('Outlined'),
+                  ),
                   IconButton(onPressed: () {}, icon: const Icon(Icons.star)),
                 ],
               ),

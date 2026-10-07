@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:synctune_sync_core/synctune_sync_core.dart';
 
 import 'sync_status_view_model.dart';
 
@@ -13,8 +14,9 @@ final class SyncGateState {
 
   const SyncGateState.unavailable()
     : status = SyncGateStatus.unavailable,
-      title = '同步尚未开放',
-      message = '平台授权、远端兼容性和同步服务完成验证后才能开始同步。';
+      title = 'Sync unavailable',
+      message =
+          'Sync requires verified platform access, remote compatibility, and sync services.';
 
   final SyncGateStatus status;
   final String title;
@@ -53,18 +55,27 @@ final class ForegroundRuntimeSnapshot {
     required this.message,
     this.runToken,
     this.lastStartedAtUtc,
+    this.requiresRemoteImport = false,
+    this.progress,
+    this.lastProgressAtUtc,
   });
 
   const ForegroundRuntimeSnapshot.idle()
     : phase = ForegroundRunPhase.idle,
-      message = '等待同步',
+      message = 'Waiting to sync',
       runToken = null,
+      requiresRemoteImport = false,
+      progress = null,
+      lastProgressAtUtc = null,
       lastStartedAtUtc = null;
 
   final ForegroundRunPhase phase;
   final String message;
   final String? runToken;
   final DateTime? lastStartedAtUtc;
+  final bool requiresRemoteImport;
+  final SyncProgress? progress;
+  final DateTime? lastProgressAtUtc;
 
   bool get isRunning =>
       phase == ForegroundRunPhase.checking ||
@@ -89,6 +100,10 @@ abstract interface class SyncRuntimeControls {
   Future<void> cancel();
 }
 
+abstract interface class RemoteMusicImportControls {
+  Future<void> importCloudMusic();
+}
+
 final syncRuntimeSnapshotProvider = StreamProvider<ForegroundRuntimeSnapshot>((
   ref,
 ) {
@@ -103,9 +118,18 @@ final syncRuntimeSnapshotProvider = StreamProvider<ForegroundRuntimeSnapshot>((
 
 Stream<ForegroundRuntimeSnapshot> _runtimeSnapshots(
   SyncRuntimeControls runtime,
-) async* {
-  yield runtime.snapshot;
-  yield* runtime.snapshots;
+) {
+  return Stream.multi((controller) {
+    // Subscribe before reading the initial value so a fast run cannot emit
+    // its next phase between the initial yield and stream subscription.
+    final subscription = runtime.snapshots.listen(
+      controller.add,
+      onError: controller.addError,
+      onDone: controller.close,
+    );
+    controller.add(runtime.snapshot);
+    controller.onCancel = subscription.cancel;
+  });
 }
 
 final syncRuntimePortProvider = Provider<SyncRuntimePort?>((ref) => null);
@@ -136,6 +160,10 @@ final class SyncGateViewModel extends Notifier<SyncGateState> {
   void setState(SyncGateState next) => invalidate(next);
 
   Future<void> refresh(SyncRuntimePort? port) async {
+    if (port is SyncRuntimeControls &&
+        (port as SyncRuntimeControls).snapshot.isRunning) {
+      return;
+    }
     final request = ++_request;
     if (_disposed) return;
     if (port == null) {
@@ -145,8 +173,8 @@ final class SyncGateViewModel extends Notifier<SyncGateState> {
     }
     state = const SyncGateState(
       status: SyncGateStatus.busy,
-      title: '正在检查同步条件',
-      message: '正在确认本地授权、远端连接和安全条件。',
+      title: 'Checking sync requirements',
+      message: '',
     );
     try {
       final next = await port.check();
@@ -156,34 +184,81 @@ final class SyncGateViewModel extends Notifier<SyncGateState> {
       if (_disposed || request != _request) return;
       state = const SyncGateState(
         status: SyncGateStatus.failed,
-        title: '同步条件检查失败',
-        message: '请检查连接和授权后重试。',
+        title: 'Sync requirements check failed',
+        message: 'Check the connection and folder access, then retry.',
       );
     }
   }
 
   Future<void> run(SyncRuntimePort? port) async {
     if (_disposed || port == null || !state.canRun) return;
+    await _run(port, port.run);
+  }
+
+  Future<void> retry(SyncRuntimePort? port) async {
+    if (_disposed ||
+        state.isBusy ||
+        port == null ||
+        port is! SyncRuntimeControls) {
+      return;
+    }
+    await refresh(port);
+    if (_disposed || !state.canRun) return;
+    await _run(port, (port as SyncRuntimeControls).retry);
+  }
+
+  Future<void> importCloudMusic(SyncRuntimePort? port) async {
+    if (_disposed ||
+        state.isBusy ||
+        port == null ||
+        port is! RemoteMusicImportControls) {
+      return;
+    }
+    await refresh(port);
+    if (_disposed || !state.canRun) return;
+    await _run(port, (port as RemoteMusicImportControls).importCloudMusic);
+  }
+
+  Future<void> _run(
+    SyncRuntimePort port,
+    Future<void> Function() operation,
+  ) async {
     final request = ++_request;
     state = const SyncGateState(
       status: SyncGateStatus.busy,
-      title: '同步进行中',
-      message: '正在执行同步，请稍候。',
+      title: 'Sync in progress',
+      message: '',
     );
     try {
-      await port.run();
+      await operation();
       if (_disposed || request != _request) return;
       state = const SyncGateState(
         status: SyncGateStatus.ready,
-        title: '同步已完成',
-        message: '本地与远端内容已完成本次同步。',
+        title: 'Sync complete',
+        message: '',
       );
     } catch (_) {
       if (_disposed || request != _request) return;
+      if (port is SyncRuntimeControls) {
+        final snapshot = (port as SyncRuntimeControls).snapshot;
+        if (snapshot.phase == ForegroundRunPhase.blocked ||
+            snapshot.phase == ForegroundRunPhase.failed) {
+          state = SyncGateState(
+            status: snapshot.phase == ForegroundRunPhase.blocked
+                ? SyncGateStatus.unavailable
+                : SyncGateStatus.failed,
+            title: snapshot.phase == ForegroundRunPhase.blocked
+                ? 'Sync blocked'
+                : 'Sync incomplete',
+            message: snapshot.message,
+          );
+          return;
+        }
+      }
       state = const SyncGateState(
         status: SyncGateStatus.failed,
-        title: '同步未完成',
-        message: '同步条件或连接发生变化，请重新扫描后重试。',
+        title: 'Sync incomplete',
+        message: 'Sync requirements or the connection changed. Scan again and retry.',
       );
     }
   }

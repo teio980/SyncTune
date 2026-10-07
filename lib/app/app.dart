@@ -1,6 +1,8 @@
 export 'design/sync_theme.dart';
 export 'design/sync_components.dart';
 export 'design/theme_mode.dart';
+export 'localization/language.dart';
+export 'localization/strings.dart';
 export 'music/music_page.dart';
 export 'music/music_scan.dart';
 export 'music/music_scan_port.dart';

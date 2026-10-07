@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../design/sync_components.dart';
 import '../design/sync_theme.dart';
 import '../design/theme_mode.dart';
+import '../localization/language.dart';
+import '../localization/strings.dart';
 import '../sync/sync_status_view_model.dart';
 import 'settings_view_model.dart';
 
@@ -75,12 +77,18 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           current?.token == grant.token &&
           current?.generation == grant.generation;
       if (!success) {
-        setState(() => _revokeError = '目录撤销失败，当前授权仍保持。');
+        setState(
+          () => _revokeError = 'Could not revoke access. Authorization remains active.',
+        );
       } else if (sameGrant) {
         ref.read(rootGrantProvider.notifier).clear();
       }
     } catch (_) {
-      if (mounted) setState(() => _revokeError = '目录撤销失败，当前授权仍保持。');
+      if (mounted) {
+        setState(
+          () => _revokeError = 'Could not revoke access. Authorization remains active.',
+        );
+      }
     } finally {
       if (mounted) setState(() => _revokeBusy = false);
     }
@@ -93,17 +101,58 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     final webDav = ref.watch(webDavSettingsProvider);
     _syncWebDavControllers(webDav.settings);
     final webDavPort = ref.watch(webDavSettingsPortProvider);
-    final webDavBusy = webDav.status == WebDavSaveStatus.saving;
+    final connectionPort = ref.watch(webDavConnectionCheckPortProvider);
+    final webDavBusy =
+        webDav.status == WebDavSaveStatus.saving ||
+        webDav.connectionStatus == WebDavConnectionStatus.checking;
     final themeMode = ref.watch(themeModeProvider);
     final themePort = ref.watch(themePreferencePortProvider);
+    final languageState = ref.watch(languageProvider);
+    final languagePort = ref.watch(languagePreferencePortProvider);
 
     return SyncTunePageScaffold(
-      title: '设置',
+      title: 'Settings',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SyncTuneSection(
-            title: '授权与连接',
+            title: 'Language',
+            child: DropdownButtonFormField<AppLanguage>(
+              key: ValueKey(languageState.language),
+              initialValue: languageState.language,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: SyncTuneStrings.of(context).text('App language'),
+                prefixIcon: const Icon(Icons.language),
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: AppLanguage.english,
+                  child: LocalizedText('English'),
+                ),
+                DropdownMenuItem(
+                  value: AppLanguage.chinese,
+                  child: LocalizedText('Chinese'),
+                ),
+              ],
+              onChanged: (language) {
+                if (language != null) {
+                  ref.read(languageProvider.notifier).select(language);
+                }
+              },
+            ),
+          ),
+          if (languagePort == null) ...[
+            const SizedBox(height: SyncTuneTokens.space8),
+            const LocalizedText('Session only'),
+          ],
+          if (languageState.saveFailed) ...[
+            const SizedBox(height: SyncTuneTokens.space8),
+            const LocalizedText('Could not save preference.'),
+          ],
+          const SizedBox(height: SyncTuneTokens.space32),
+          SyncTuneSection(
+            title: 'Access and connection',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -123,7 +172,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.folder_open),
-                      label: Text(_pickBusy ? '正在打开系统选择器…' : '选择音乐根目录'),
+                      label: LocalizedText(
+                        _pickBusy
+                            ? 'Opening folder picker…'
+                            : 'Choose music root folder',
+                      ),
                     ),
                     OutlinedButton.icon(
                       onPressed:
@@ -138,17 +191,23 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.folder_off_outlined),
-                      label: Text(_revokeBusy ? '正在撤销授权…' : '撤销目录授权'),
+                      label: LocalizedText(
+                        _revokeBusy
+                            ? 'Revoking access…'
+                            : 'Revoke folder access',
+                      ),
                     ),
                   ],
                 ),
                 if (grant != null && widget.onRevokeRoot == null) ...[
                   const SizedBox(height: SyncTuneTokens.space8),
-                  const Text('当前平台未提供撤销服务。'),
+                  const LocalizedText(
+                    'Revocation unavailable on this platform.',
+                  ),
                 ],
                 if (_revokeError != null) ...[
                   const SizedBox(height: SyncTuneTokens.space8),
-                  Text(
+                  LocalizedText(
                     _revokeError!,
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.error,
@@ -162,7 +221,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       MaterialPageRoute(builder: widget.diagnosticsBuilder!),
                     ),
                     icon: const Icon(Icons.science_outlined),
-                    label: const Text('打开平台诊断'),
+                    label: const LocalizedText('Open platform diagnostics'),
                   ),
                 ],
               ],
@@ -170,18 +229,27 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           const SizedBox(height: SyncTuneTokens.space32),
           SyncTuneSection(
-            title: '外观',
-            description: '默认跟随系统，也可以为本设备选择浅色或深色。',
+            title: 'Appearance',
             child: DropdownButtonFormField<ThemeMode>(
+              isExpanded: true,
               initialValue: themeMode,
-              decoration: const InputDecoration(
-                labelText: '主题模式',
-                prefixIcon: Icon(Icons.brightness_6_outlined),
+              decoration: InputDecoration(
+                labelText: SyncTuneStrings.of(context).text('Theme mode'),
+                prefixIcon: const Icon(Icons.brightness_6_outlined),
               ),
               items: const [
-                DropdownMenuItem(value: ThemeMode.system, child: Text('跟随系统')),
-                DropdownMenuItem(value: ThemeMode.light, child: Text('浅色')),
-                DropdownMenuItem(value: ThemeMode.dark, child: Text('深色')),
+                DropdownMenuItem(
+                  value: ThemeMode.system,
+                  child: LocalizedText('System'),
+                ),
+                DropdownMenuItem(
+                  value: ThemeMode.light,
+                  child: LocalizedText('Light'),
+                ),
+                DropdownMenuItem(
+                  value: ThemeMode.dark,
+                  child: LocalizedText('Dark'),
+                ),
               ],
               onChanged: (value) {
                 if (value != null) {
@@ -192,19 +260,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           if (themePort == null) ...[
             const SizedBox(height: SyncTuneTokens.space8),
-            const Text('主题选择将在本次运行中生效；偏好存储服务尚未连接。'),
+            const LocalizedText('Session only'),
           ],
           const SizedBox(height: SyncTuneTokens.space32),
           SyncTuneSection(
-            title: '凭据与 WebDAV',
-            description: '保存连接信息后，完成底层兼容性检查才能启用同步。',
+            title: 'Credentials and WebDAV',
             child: _WebDavForm(
               endpointController: _endpointController,
               usernameController: _usernameController,
               passwordController: _passwordController,
               state: webDav,
               portAvailable: webDavPort != null,
-              busy: webDavBusy,
               onEndpointChanged: _onEndpointChanged,
               onUsernameChanged: _onUsernameChanged,
               onPasswordChanged: _onPasswordChanged,
@@ -213,13 +279,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   : () => ref
                         .read(webDavSettingsProvider.notifier)
                         .save(webDavPort),
+              onCheckConnection: connectionPort == null || webDavBusy
+                  ? null
+                  : () => ref
+                        .read(webDavSettingsProvider.notifier)
+                        .checkConnection(connectionPort),
             ),
-          ),
-          const SizedBox(height: SyncTuneTokens.space32),
-          const SyncTuneStatusCard(
-            title: '权限状态',
-            message: '平台权限验证完成后，同步功能才会开放。目录授权、完整扫描、远端兼容性和平台安全闸门也必须通过。',
-            icon: Icons.security_outlined,
           ),
         ],
       ),
@@ -257,26 +322,23 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Widget _rootCard({required RootGrant? grant, required String status}) {
     final card = switch (status) {
       'loading' => const SyncTuneStatusCard(
-        title: '正在确认目录授权',
-        message: '请稍候。',
+        title: 'Checking folder access',
         icon: Icons.hourglass_top_outlined,
       ),
       'error' || 'revoked' => const SyncTuneStatusCard(
-        title: '音乐根目录不可用',
-        message: '授权已失效，请重新选择音乐根目录。',
+        title: 'Music root folder unavailable',
+        message: 'Choose the folder again.',
         icon: Icons.folder_off_outlined,
         tone: SyncTuneStatusTone.error,
       ),
       _ when grant != null => SyncTuneStatusCard(
-        title: '音乐根目录已授权',
-        message: '仅访问你选择的目录。',
+        title: 'Music root folder authorized',
         icon: Icons.folder_shared_outlined,
         tone: SyncTuneStatusTone.positive,
-        action: SyncTuneKeyValue(label: '目录', value: grant.path),
+        action: SyncTuneKeyValue(label: 'Folder', value: grant.path),
       ),
       _ => const SyncTuneStatusCard(
-        title: '未选择音乐根目录',
-        message: '请选择一个音乐目录开始使用 SyncTune。',
+        title: 'No music root folder selected',
         icon: Icons.folder_outlined,
       ),
     };
@@ -291,11 +353,11 @@ class _WebDavForm extends StatelessWidget {
     required this.passwordController,
     required this.state,
     required this.portAvailable,
-    required this.busy,
     required this.onEndpointChanged,
     required this.onUsernameChanged,
     required this.onPasswordChanged,
     required this.onSave,
+    required this.onCheckConnection,
   });
 
   final TextEditingController endpointController;
@@ -303,15 +365,17 @@ class _WebDavForm extends StatelessWidget {
   final TextEditingController passwordController;
   final WebDavSettingsState state;
   final bool portAvailable;
-  final bool busy;
   final ValueChanged<String> onEndpointChanged;
   final ValueChanged<String> onUsernameChanged;
   final ValueChanged<String> onPasswordChanged;
   final VoidCallback? onSave;
+  final VoidCallback? onCheckConnection;
 
   @override
   Widget build(BuildContext context) {
     final message = state.message;
+    final saving = state.status == WebDavSaveStatus.saving;
+    final checking = state.connectionStatus == WebDavConnectionStatus.checking;
     final statusTone = state.status == WebDavSaveStatus.failed
         ? SyncTuneStatusTone.error
         : state.status == WebDavSaveStatus.saved
@@ -325,10 +389,10 @@ class _WebDavForm extends StatelessWidget {
           onChanged: onEndpointChanged,
           keyboardType: TextInputType.url,
           textInputAction: TextInputAction.next,
-          decoration: const InputDecoration(
-            labelText: 'WebDAV 地址',
+          decoration: InputDecoration(
+            labelText: SyncTuneStrings.of(context).text('WebDAV URL'),
             hintText: 'https://example.com/music',
-            prefixIcon: Icon(Icons.link),
+            prefixIcon: const Icon(Icons.link),
           ),
         ),
         const SizedBox(height: SyncTuneTokens.space12),
@@ -336,9 +400,9 @@ class _WebDavForm extends StatelessWidget {
           controller: usernameController,
           onChanged: onUsernameChanged,
           textInputAction: TextInputAction.next,
-          decoration: const InputDecoration(
-            labelText: '用户名',
-            prefixIcon: Icon(Icons.person_outline),
+          decoration: InputDecoration(
+            labelText: SyncTuneStrings.of(context).text('Username'),
+            prefixIcon: const Icon(Icons.person_outline),
           ),
         ),
         const SizedBox(height: SyncTuneTokens.space12),
@@ -347,9 +411,9 @@ class _WebDavForm extends StatelessWidget {
           onChanged: onPasswordChanged,
           obscureText: true,
           textInputAction: TextInputAction.done,
-          decoration: const InputDecoration(
-            labelText: '密码',
-            prefixIcon: Icon(Icons.password_outlined),
+          decoration: InputDecoration(
+            labelText: SyncTuneStrings.of(context).text('Password'),
+            prefixIcon: const Icon(Icons.password_outlined),
           ),
         ),
         const SizedBox(height: SyncTuneTokens.space12),
@@ -360,26 +424,67 @@ class _WebDavForm extends StatelessWidget {
           children: [
             FilledButton.icon(
               onPressed: onSave,
-              icon: busy
+              icon: saving
                   ? const SizedBox.square(
                       dimension: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.save_outlined),
-              label: Text(busy ? '保存中…' : '保存 WebDAV 设置'),
+              label: LocalizedText(saving ? 'Saving…' : 'Save WebDAV settings'),
             ),
-            if (!portAvailable) const Text('远端服务尚未连接，保存功能暂不可用。'),
+            OutlinedButton.icon(
+              onPressed: onCheckConnection,
+              icon: checking
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.wifi_tethering_outlined),
+              label: LocalizedText(
+                checking ? 'Checking connection…' : 'Check connection status',
+              ),
+            ),
+            if (!portAvailable)
+              const LocalizedText(
+                'WebDAV service unavailable.',
+              ),
           ],
         ),
         if (message != null) ...[
           const SizedBox(height: SyncTuneTokens.space12),
           SyncTuneStatusCard(
-            title: state.status == WebDavSaveStatus.saved ? '已保存' : '设置状态',
-            message: message,
+            title: state.status == WebDavSaveStatus.saved
+                ? 'Settings saved'
+                : 'Settings status',
+            message: state.status == WebDavSaveStatus.saved ? '' : message,
             icon: state.status == WebDavSaveStatus.failed
                 ? Icons.error_outline
                 : Icons.info_outline,
             tone: statusTone,
+          ),
+        ],
+        if (state.connectionMessage != null) ...[
+          const SizedBox(height: SyncTuneTokens.space12),
+          Semantics(
+            liveRegion: true,
+            child: SyncTuneStatusCard(
+              title: switch (state.connectionStatus) {
+                WebDavConnectionStatus.connected => 'Connection successful',
+                WebDavConnectionStatus.failed => 'Connection check failed',
+                _ => 'Connection status',
+              },
+              message: state.connectionMessage!,
+              icon: switch (state.connectionStatus) {
+                WebDavConnectionStatus.connected => Icons.check_circle_outline,
+                WebDavConnectionStatus.failed => Icons.error_outline,
+                _ => Icons.info_outline,
+              },
+              tone: switch (state.connectionStatus) {
+                WebDavConnectionStatus.connected => SyncTuneStatusTone.positive,
+                WebDavConnectionStatus.failed => SyncTuneStatusTone.error,
+                _ => SyncTuneStatusTone.neutral,
+              },
+            ),
           ),
         ],
       ],

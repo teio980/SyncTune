@@ -14,11 +14,193 @@ import 'package:synctune/app/sync/sync_gate.dart';
 import 'package:synctune/app/sync/sync_status_view_model.dart';
 import 'package:synctune/data/sync_tune_database.dart';
 import 'package:synctune/infrastructure/composition/synctune_composition.dart';
+import 'package:synctune/infrastructure/platform/broker_capabilities.dart';
 import 'package:synctune/infrastructure/platform/broker_credentials.dart';
 import 'package:synctune/infrastructure/runtime/foreground_sync_runtime.dart';
 import 'package:synctune_sync_core/synctune_sync_core.dart';
 
 void main() {
+  test(
+    'runtime evidence validator binds marker to the active root and restart',
+    () {
+      final fixture = _runtimeEvidenceFixture();
+      expect(
+        PersistedRuntimeEvidenceGate.validate(
+          currentProcess: fixture.process,
+          currentEvidence: fixture.evidence,
+          history: fixture.history,
+          capabilities: fixture.capabilities,
+          rootToken: 'root-token',
+          rootGeneration: 'generation-1',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test('runtime evidence rejects a changed root or generation', () {
+    final fixture = _runtimeEvidenceFixture();
+    expect(
+      PersistedRuntimeEvidenceGate.validate(
+        currentProcess: fixture.process,
+        currentEvidence: fixture.evidence,
+        history: fixture.history,
+        capabilities: fixture.capabilities,
+        rootToken: 'other-root',
+        rootGeneration: 'generation-1',
+      ),
+      isFalse,
+    );
+    expect(
+      PersistedRuntimeEvidenceGate.validate(
+        currentProcess: fixture.process,
+        currentEvidence: fixture.evidence,
+        history: fixture.history,
+        capabilities: fixture.capabilities,
+        rootToken: 'root-token',
+        rootGeneration: 'generation-2',
+      ),
+      isFalse,
+    );
+  });
+
+  test('runtime evidence rejects a stale marker or content', () {
+    final fixture = _runtimeEvidenceFixture();
+    final stale = <String, Object?>{
+      ...fixture.history.single,
+      'folderPick': <String, Object?>{
+        'status': 'ok',
+        'reopen': 'ok',
+        'fileIo': 'ok',
+        'token': 'root-token',
+        'generation': 'generation-1',
+        'marker': 'different-marker',
+        'markerContent': 'different-content',
+      },
+    };
+    expect(
+      PersistedRuntimeEvidenceGate.validate(
+        currentProcess: fixture.process,
+        currentEvidence: fixture.evidence,
+        history: <Map<String, Object?>>[stale],
+        capabilities: fixture.capabilities,
+        rootToken: 'root-token',
+        rootGeneration: 'generation-1',
+      ),
+      isFalse,
+    );
+  });
+
+  test('runtime evidence requires the candidate itself to prove a restart', () {
+    final fixture = _runtimeEvidenceFixture();
+    final startup = fixture.evidence['startup']! as Map<String, Object?>;
+    final startupProcess = startup['process']! as Map<String, Object?>;
+    final restore = startup['folderRestore']! as Map<String, Object?>;
+    final candidate = <String, Object?>{
+      ...fixture.evidence,
+      'startup': <String, Object?>{
+        ...startup,
+        'process': <String, Object?>{...startupProcess, 'pid': 10},
+        'folderRestore': <String, Object?>{...restore, 'restoredPid': 10},
+      },
+    };
+    expect(
+      PersistedRuntimeEvidenceGate.validate(
+        currentProcess: <String, Object?>{...fixture.process, 'pid': 20},
+        currentEvidence: candidate,
+        history: fixture.history,
+        capabilities: fixture.capabilities,
+        rootToken: 'root-token',
+        rootGeneration: 'generation-1',
+      ),
+      isFalse,
+    );
+  });
+
+  test('runtime evidence rejects a transport that differs from production', () {
+    final fixture = _runtimeEvidenceFixture();
+    final startup = fixture.evidence['startup']! as Map<String, Object?>;
+    final candidate = <String, Object?>{
+      ...fixture.evidence,
+      'startup': <String, Object?>{
+        ...startup,
+        'https': <String, Object?>{
+          ...(startup['https']! as Map<String, Object?>),
+          'transport': 'dart_io_http_client',
+        },
+      },
+    };
+    expect(
+      PersistedRuntimeEvidenceGate.validate(
+        currentProcess: fixture.process,
+        currentEvidence: candidate,
+        history: fixture.history,
+        capabilities: fixture.capabilities,
+        rootToken: 'root-token',
+        rootGeneration: 'generation-1',
+      ),
+      isFalse,
+    );
+  });
+
+  test('reuses only same-PFN folder marker evidence across app upgrades', () {
+    final fixture = _runtimeEvidenceFixture();
+    final currentProcess = <String, Object?>{
+      ...fixture.process,
+      'packageVersion': '1.0.0.10',
+    };
+    final startup = fixture.evidence['startup']! as Map<String, Object?>;
+    final currentEvidence = <String, Object?>{
+      ...fixture.evidence,
+      'startup': <String, Object?>{...startup, 'process': currentProcess},
+    };
+    final oldMarker = <String, Object?>{
+      ...fixture.history.single,
+      'startup': <String, Object?>{
+        ...(fixture.history.single['startup']! as Map<String, Object?>),
+        'process': <String, Object?>{
+          'pid': 9,
+          'appContainer': 'true',
+          'packageFamily': currentProcess['packageFamily'],
+          'packageVersion': '1.0.0.9',
+        },
+      },
+    };
+    expect(
+      PersistedRuntimeEvidenceGate.validate(
+        currentProcess: currentProcess,
+        currentEvidence: currentEvidence,
+        history: <Map<String, Object?>>[oldMarker],
+        capabilities: fixture.capabilities,
+        rootToken: 'root-token',
+        rootGeneration: 'generation-1',
+      ),
+      isTrue,
+    );
+    final crossPfn = <String, Object?>{
+      ...oldMarker,
+      'startup': <String, Object?>{
+        ...(oldMarker['startup']! as Map<String, Object?>),
+        'process': <String, Object?>{
+          ...(oldMarker['startup']! as Map<String, Object?>)['process']!
+              as Map<String, Object?>,
+          'packageFamily': 'Other.Package_family',
+        },
+      },
+    };
+    expect(
+      PersistedRuntimeEvidenceGate.validate(
+        currentProcess: currentProcess,
+        currentEvidence: currentEvidence,
+        history: <Map<String, Object?>>[crossPfn],
+        capabilities: fixture.capabilities,
+        rootToken: 'root-token',
+        rootGeneration: 'generation-1',
+      ),
+      isFalse,
+    );
+  });
+
   test(
     'catalog enrichment gives UI and core the same stable entry id',
     () async {
@@ -143,8 +325,8 @@ void main() {
       plans: services.plans,
       capabilityCheck: (_, {required token}) async => const SyncGateState(
         status: SyncGateStatus.ready,
-        title: '测试闸门已通过',
-        message: '显式注入的测试能力检查',
+        title: 'Test safety checks passed',
+        message: 'Explicitly injected test capability check',
       ),
     );
     expect((await runner.check(target)).status, SyncGateStatus.ready);
@@ -348,7 +530,7 @@ void main() {
 
     expect((await settings.load()).password, isEmpty);
     expect(cleanupMessages, hasLength(1));
-    expect(settings.takeWarning(), contains('清理失败'));
+    expect(settings.takeWarning(), contains('cleanup failed'));
   });
 
   test('a cleared credential fails closed in the configured client', () async {
@@ -559,7 +741,7 @@ void main() {
         await database.loadSetting('webdav.connection'),
         contains('one.example'),
       );
-      expect(settings.takeWarning(), contains('设置已保存'));
+      expect(settings.takeWarning(), contains('Settings saved'));
     },
   );
 
@@ -705,6 +887,99 @@ void main() {
       );
     });
   }
+}
+
+final class _RuntimeEvidenceFixture {
+  const _RuntimeEvidenceFixture({
+    required this.process,
+    required this.evidence,
+    required this.history,
+    required this.capabilities,
+  });
+
+  final Map<String, Object?> process;
+  final Map<String, Object?> evidence;
+  final List<Map<String, Object?>> history;
+  final BrokerCapabilities capabilities;
+}
+
+_RuntimeEvidenceFixture _runtimeEvidenceFixture() {
+  const capabilities = BrokerCapabilities(
+    platform: 'windows',
+    credentials: 'windows_password_vault',
+    staging: 'persistent_after_finish_root_scoped',
+    atomicCreate: 'fail_if_exists_verified',
+    conditionalReplace: 'unsupported_appcontainer_provider',
+    conditionalDelete: 'unsupported_appcontainer_provider',
+    temporaryPermission: 'not_applicable',
+  );
+  final process = <String, Object?>{
+    'pid': 20,
+    'appContainer': 'true',
+    'packageFamily': 'SyncTune.PlatformProbe_375yrp0h8h1bw',
+    'packageVersion': '1.0.0.8',
+  };
+  final startup = <String, Object?>{
+    'process': process,
+    'sqlite': <String, Object?>{'status': 'passed', 'restartCheck': true},
+    'https': <String, Object?>{
+      'status': 'passed',
+      'httpStatus': 200,
+      'transport': PersistedRuntimeEvidenceGate.productionHttpsTransport,
+    },
+    'credential': <String, Object?>{
+      'status': 'ok',
+      'restartCheck': 'ok',
+      'appContainer': 'true',
+    },
+    'folderRestore': <String, Object?>{
+      'status': 'ok',
+      'fileIo': 'ok',
+      'restoredPid': 20,
+      'token': 'root-token',
+      'generation': 'generation-1',
+      'marker': 'marker.txt',
+      'restoredContent': 'marker-content',
+    },
+    'brokerCapabilities': <String, Object?>{
+      'status': 'ok',
+      'platform': capabilities.platform,
+      'credentials': capabilities.credentials,
+      'staging': capabilities.staging,
+      'atomicCreate': capabilities.atomicCreate,
+      'conditionalReplace': capabilities.conditionalReplace,
+      'conditionalDelete': capabilities.conditionalDelete,
+      'temporaryPermission': capabilities.temporaryPermission,
+    },
+  };
+  final history = <Map<String, Object?>>[
+    <String, Object?>{
+      'schema': 1,
+      'startup': <String, Object?>{
+        'process': <String, Object?>{
+          'pid': 10,
+          'appContainer': 'true',
+          'packageFamily': process['packageFamily'],
+          'packageVersion': process['packageVersion'],
+        },
+      },
+      'folderPick': <String, Object?>{
+        'status': 'ok',
+        'reopen': 'ok',
+        'fileIo': 'ok',
+        'token': 'root-token',
+        'generation': 'generation-1',
+        'marker': 'marker.txt',
+        'markerContent': 'marker-content',
+      },
+    },
+  ];
+  return _RuntimeEvidenceFixture(
+    process: process,
+    evidence: <String, Object?>{'schema': 1, 'startup': startup},
+    history: history,
+    capabilities: capabilities,
+  );
 }
 
 final class _Scanner implements MusicScannerPort {
@@ -980,6 +1255,7 @@ final class _UnusedLocalObjects implements LocalObjectStore {
   Future<void> delete(
     SyncPath path, {
     required LocalCondition condition,
+    String? operationId,
     CancellationToken token = const NeverCancelled(),
   }) => _unused();
 

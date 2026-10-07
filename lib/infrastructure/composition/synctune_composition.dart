@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import 'package:drift/drift.dart';
 import 'package:synctune_sync_core/synctune_sync_core.dart';
 
 import '../../app/design/theme_mode.dart';
+import '../../app/localization/language.dart';
 import '../../app/music/music_scan.dart';
 import '../../app/music/music_scan_port.dart';
 import '../../app/settings/settings_view_model.dart';
@@ -19,12 +21,15 @@ import '../../data/broker_local_snapshot_provider.dart';
 import '../../data/catalog_recording_local_object_store.dart';
 import '../../data/sync_tune_database.dart';
 import '../../data/webdav_repository.dart';
+import '../network/webdav_connection_checker.dart';
+import '../network/windows_winrt_http_adapter.dart';
 import '../platform/broker_capabilities.dart';
 import '../platform/broker_credentials.dart';
 import '../platform/broker_local_object_store.dart';
 import '../platform/broker_music_scanner.dart';
 import '../platform/broker_root_revoker.dart';
 import '../runtime/foreground_sync_runtime.dart';
+import '../runtime/sync_failure_message.dart';
 
 /// The services needed before a sync can be opened. Production composition
 /// leaves this bundle absent until local broker, remote compatibility and the
@@ -39,6 +44,7 @@ final class CompositionSyncServices {
     required this.journal,
     required this.plans,
     this.capabilityCheck,
+    this.remoteMusicImport,
   });
 
   final LocalSnapshotProvider localSnapshots;
@@ -49,6 +55,7 @@ final class CompositionSyncServices {
   final JournalStore journal;
   final PlanStore plans;
   final CompositionCapabilityCheck? capabilityCheck;
+  final Future<void> Function(CancellationToken token)? remoteMusicImport;
 }
 
 typedef CompositionCapabilityCheck = Future<SyncGateState> Function(
@@ -146,7 +153,8 @@ final class CompositionTargetPort implements SyncRuntimeTargetPort {
 
 /// A core coordinator adapter. It deliberately returns an unavailable gate
 /// until the composition root supplies every local/remote/durable service.
-final class CompositionConfirmedSyncRunner implements ConfirmedSyncRunner {
+final class CompositionConfirmedSyncRunner
+    implements ConfirmedSyncRunner, ExistingRemoteMusicImporter {
   CompositionConfirmedSyncRunner({
     SyncCoordinator coordinator = const SyncCoordinator(),
     CompositionSyncServices? services,
@@ -157,6 +165,20 @@ final class CompositionConfirmedSyncRunner implements ConfirmedSyncRunner {
   CompositionSyncServices? _services;
 
   set services(CompositionSyncServices? value) => _services = value;
+
+  @override
+  Future<void> importCloudMusic(
+    SyncRuntimeTarget target, {
+    required CancellationToken token,
+  }) async {
+    final importer = _services?.remoteMusicImport;
+    if (importer == null) {
+      throw const SyncRuntimeNotReady('Cloud music import is unavailable.');
+    }
+    token.throwIfCancelled();
+    await importer(token);
+    token.throwIfCancelled();
+  }
 
   @override
   Future<SyncGateState> check(
@@ -185,7 +207,7 @@ final class CompositionConfirmedSyncRunner implements ConfirmedSyncRunner {
   }) async {
     final services = _services;
     if (services == null) {
-      throw const SyncRuntimeNotReady('同步服务尚未完成绑定');
+      throw const SyncRuntimeNotReady('The sync service is not connected yet');
     }
     token.throwIfCancelled();
     final root = SyncRoot(
@@ -214,6 +236,19 @@ final class CompositionConfirmedSyncRunner implements ConfirmedSyncRunner {
 
 /// Drift-backed preference storage. The setting table is app-private and
 /// does not contain credentials.
+final class DatabaseLanguagePreferencePort implements LanguagePreferencePort {
+  const DatabaseLanguagePreferencePort(this.database);
+  final SyncTuneDatabase database;
+
+  @override
+  Future<AppLanguage> load() async =>
+      AppLanguage.fromCode(await database.loadSetting('language'));
+
+  @override
+  Future<void> save(AppLanguage language) =>
+      database.saveSetting('language', language.code);
+}
+
 final class DatabaseThemePreferencePort implements ThemePreferencePort {
   const DatabaseThemePreferencePort(this.database);
 
@@ -443,9 +478,11 @@ final class DatabaseWebDavSettingsPort
           account: oldAccount,
         );
       } catch (_) {
-        _warning = '旧 WebDAV 凭据清理失败，当前设置仍已生效。';
+        _warning = 'Old WebDAV credential cleanup failed. The current settings remain active.';
         try {
-          onCredentialCleanupFailed?.call('旧 WebDAV 凭据清理失败，当前设置仍已生效。');
+          onCredentialCleanupFailed?.call(
+            'Old WebDAV credential cleanup failed. The current settings remain active.',
+          );
         } catch (_) {
           // Cleanup reporting is advisory and must not turn a committed
           // setting into a failed save.
@@ -462,12 +499,13 @@ final class DatabaseWebDavSettingsPort
     try {
       onNamespaceChanged(namespaceFor(endpoint, username));
     } catch (_) {
-      _warning ??= '设置已保存，但运行时同步身份更新失败。';
+      _warning ??=
+          'Settings saved, but the runtime sync identity could not be updated.';
     }
     try {
       onCredentialEpochChanged?.call(credentialEpoch);
     } catch (_) {
-      _warning ??= '设置已保存，但运行时凭据版本更新失败。';
+      _warning ??= 'Settings saved, but the runtime credential version could not be updated.';
     }
   }
 
@@ -599,7 +637,9 @@ final class DatabaseMusicFavoritesPort implements MusicFavoritesPort {
   }) {
     final id = track.id;
     if (id == null || id.isEmpty) {
-      return Future<void>.error(StateError('扫描条目缺少稳定收藏标识'));
+      return Future<void>.error(
+        StateError('The scan entry has no stable favorites identifier'),
+      );
     }
     return _save(entryId: id, relativePath: track.relativePath, value: value);
   }
@@ -712,16 +752,20 @@ final class CompositionWebDavClient
     required this.credentials,
     required this.targets,
     this.dioFactory,
+    this.transportChannel,
+    this.root,
   });
 
   final WebDavSettingsLoader settings;
   final BrokerCredentialStore credentials;
   final CompositionTargetPort targets;
 
-  /// Test-only transport seam. Production leaves this null and uses Dio's
-  /// normal adapter, while composition recovery tests can delay a response
-  /// without opening a real network connection.
+  /// Test-only transport seam. Production leaves this null and uses the
+  /// platform transport selected below, while composition recovery tests can
+  /// delay a response without opening a real network connection.
   final Dio Function(BaseOptions options)? dioFactory;
+  final BrokerMethodChannel? transportChannel;
+  final BrokerRootPort? root;
   final Map<String, _WebDavClientEntry> _entries =
       <String, _WebDavClientEntry>{};
   bool _disposed = false;
@@ -739,13 +783,15 @@ final class CompositionWebDavClient
     if (_disposed) throw const SyncCancelled();
     token.throwIfCancelled();
     final initialIdentity = targets.current?.identity;
-    if (initialIdentity == null) throw const SyncRuntimeNotReady('尚未授权同步根目录');
+    if (initialIdentity == null) {
+      throw const SyncRuntimeNotReady('Sync root folder access required');
+    }
     final current = await settings.load();
     token.throwIfCancelled();
     _ensureTarget(initialIdentity);
     final endpoint = canonicalWebDavEndpoint(current.endpoint);
     if (endpoint == null) {
-      throw const SyncRuntimeNotReady('WebDAV 地址尚未完成配置');
+      throw const SyncRuntimeNotReady('The WebDAV URL is not configured');
     }
     var password = current.password;
     if (current.username.isNotEmpty && password.isEmpty) {
@@ -758,7 +804,9 @@ final class CompositionWebDavClient
               current.username,
             );
       if (account == null) {
-        throw const SyncRuntimeNotReady('WebDAV 凭据尚未完成配置');
+        throw const SyncRuntimeNotReady(
+          'WebDAV credentials are not configured',
+        );
       }
       password =
           await credentials.read(
@@ -770,7 +818,7 @@ final class CompositionWebDavClient
     token.throwIfCancelled();
     _ensureTarget(initialIdentity);
     if (current.username.isNotEmpty && password.isEmpty) {
-      throw const SyncRuntimeNotReady('WebDAV 凭据尚未完成配置');
+      throw const SyncRuntimeNotReady('WebDAV credentials are not configured');
     }
     final credentialEpoch = current.credentialEpoch.isEmpty
         ? DatabaseWebDavSettingsPort.namespaceFor(endpoint, current.username)
@@ -797,13 +845,24 @@ final class CompositionWebDavClient
     final entry = _WebDavClientEntry(
       dio:
           dioFactory?.call(BaseOptions(headers: headers)) ??
-          Dio(BaseOptions(headers: headers)),
+          _createProductionDio(headers),
       key: key,
       baseUri: Uri.parse(endpoint),
     );
     _entries[key] = entry;
     entry.leases++;
     return _WebDavLease(this, entry);
+  }
+
+  Dio _createProductionDio(Map<String, String> headers) {
+    final dio = Dio(BaseOptions(headers: headers));
+    if (Platform.isWindows && transportChannel != null) {
+      dio.httpClientAdapter = WindowsWinRtHttpAdapter(
+        channel: transportChannel!,
+        root: root,
+      );
+    }
+    return dio;
   }
 
   void _ensureTarget(String identity) {
@@ -816,6 +875,16 @@ final class CompositionWebDavClient
     final lease = await _lease(token: token);
     try {
       await lease.repository.propfindRoot(token: token);
+    } finally {
+      await lease.release();
+    }
+  }
+
+  Future<void> importCloudMusic({required CancellationToken token}) async {
+    final lease = await _lease(token: token);
+    try {
+      await WebDavRemoteSnapshotProvider(repository: lease.repository)
+          .importExistingMusic(token: token);
     } finally {
       await lease.release();
     }
@@ -1021,6 +1090,275 @@ final class CompositionRemoteRepository
   );
 }
 
+/// Reads the evidence written by the platform diagnostics route and checks it
+/// against the currently running packaged process.  The evidence file is only
+/// an audit trail; the native broker capability response is queried again so
+/// a stale or edited record cannot widen the platform contract.
+final class PersistedRuntimeEvidenceGate
+    implements CompositionRuntimeEvidenceGate {
+  /// The production WebDAV client uses the same bounded WinRT transport as
+  /// the Windows probe. Android and other native targets retain Dio's
+  /// dart:io transport.
+  static String get productionHttpsTransport =>
+      Platform.isWindows ? 'dio_winrt_http' : 'dart_io_http_client';
+
+  const PersistedRuntimeEvidenceGate({
+    required this.channel,
+    required this.root,
+  });
+
+  final BrokerMethodChannel channel;
+  final BrokerRootPort root;
+
+  @override
+  Future<bool> verify(
+    SyncRuntimeTarget target, {
+    required CancellationToken token,
+  }) async {
+    token.throwIfCancelled();
+    if (!_sameRoot(root.current, target)) return false;
+    final process = _asMap(await channel.invokeMethod<Object?>('processInfo'));
+    if (!_sameRoot(root.current, target)) return false;
+    if (process == null) return false;
+    final processPid = _text(process['pid']);
+    final packageFamily = _text(process['packageFamily']);
+    final packageVersion = _text(process['packageVersion']);
+    if (processPid == null ||
+        packageFamily == null ||
+        packageVersion == null ||
+        process['appContainer'] != 'true') {
+      return false;
+    }
+    token.throwIfCancelled();
+    final databasePath = await channel.invokeMethod<String>(
+      'privateDatabasePath',
+    );
+    if (!_sameRoot(root.current, target)) return false;
+    if (databasePath == null || databasePath.isEmpty) return false;
+    final directory = Directory(File(databasePath).parent.path);
+    if (!await directory.exists()) return false;
+    final currentFile = File(
+      '${directory.path}${Platform.pathSeparator}'
+      'synctune-probe-results-$processPid.json',
+    );
+    final current = await currentFile.exists()
+        ? await _readEvidence(currentFile)
+        : null;
+    if (!_sameRoot(root.current, target)) return false;
+
+    final history = <Map<String, Object?>>[];
+    await for (final entity in directory.list()) {
+      token.throwIfCancelled();
+      if (entity is! File ||
+          !RegExp(r'synctune-probe-results-\d+\.json$')
+              .hasMatch(entity.uri.pathSegments.last)) {
+        continue;
+      }
+      final record = await _readEvidence(entity);
+      if (record != null) history.add(record);
+    }
+    if (!_sameRoot(root.current, target)) return false;
+
+    final liveRestore = _asMap(
+      await channel.invokeMethod<Object?>('restoreFolder'),
+    );
+    if (!_sameRoot(root.current, target)) return false;
+    if (liveRestore == null ||
+        liveRestore['status'] != 'ok' ||
+        liveRestore['fileIo'] != 'ok' ||
+        _text(liveRestore['token']) != target.rootToken ||
+        _text(liveRestore['generation']) != target.rootGeneration) {
+      return false;
+    }
+
+    final rawCapabilities = await channel.invokeMethod<Object?>(
+      'brokerCapabilities',
+    );
+    final capabilities = BrokerCapabilities.fromResponse(rawCapabilities);
+    token.throwIfCancelled();
+    if (!_sameRoot(root.current, target)) return false;
+    final candidates = <Map<String, Object?>>[?current, ...history.reversed];
+    for (final candidate in candidates) {
+      if (!validate(
+        currentProcess: process,
+        currentEvidence: candidate,
+        history: history,
+        capabilities: capabilities,
+        rootToken: target.rootToken,
+        rootGeneration: target.rootGeneration,
+      )) {
+        continue;
+      }
+      final startup = _asMap(candidate['startup']);
+      final restored = _asMap(startup?['folderRestore']);
+      if (_sameRestore(restored, liveRestore)) return true;
+    }
+    return false;
+  }
+
+  /// Pure validation for acceptance tests and offline evidence review.
+  static bool validate({
+    required Map<String, Object?> currentProcess,
+    required Map<String, Object?> currentEvidence,
+    required Iterable<Map<String, Object?>> history,
+    required BrokerCapabilities capabilities,
+    required String rootToken,
+    required String rootGeneration,
+    String? requiredHttpsTransport,
+  }) {
+    final expectedHttpsTransport =
+        requiredHttpsTransport ?? productionHttpsTransport;
+    final processPid = _text(currentProcess['pid']);
+    final packageFamily = _text(currentProcess['packageFamily']);
+    final packageVersion = _text(currentProcess['packageVersion']);
+    if (processPid == null ||
+        packageFamily == null ||
+        packageVersion == null ||
+        currentProcess['appContainer'] != 'true') {
+      return false;
+    }
+    final startup = _asMap(currentEvidence['startup']);
+    final startupProcess = _asMap(startup?['process']);
+    if (currentEvidence['schema'] != 1 ||
+        startup == null ||
+        startupProcess == null ||
+        _text(startupProcess['pid']) == null ||
+        startupProcess['appContainer'] != 'true' ||
+        _text(startupProcess['packageFamily']) != packageFamily ||
+        _text(startupProcess['packageVersion']) != packageVersion) {
+      return false;
+    }
+
+    final sqlite = _asMap(startup['sqlite']);
+    if (sqlite?['status'] != 'passed' || sqlite?['restartCheck'] != true) {
+      return false;
+    }
+    final https = _asMap(startup['https']);
+    final httpStatus = https?['httpStatus'];
+    if (https?['status'] != 'passed' ||
+        httpStatus is! num ||
+        httpStatus < 200 ||
+        httpStatus >= 300) {
+      return false;
+    }
+    if (https?['transport'] != expectedHttpsTransport) {
+      return false;
+    }
+    final credential = _asMap(startup['credential']);
+    if (credential?['status'] != 'ok' ||
+        credential?['restartCheck'] != 'ok' ||
+        credential?['appContainer'] != 'true') {
+      return false;
+    }
+    final restored = _asMap(startup['folderRestore']);
+    final startupPid = _text(startupProcess['pid']);
+    final restoredContent = _text(
+      restored?['restoredContent'] ?? restored?['markerContent'],
+    );
+    if (restored?['status'] != 'ok' ||
+        restored?['fileIo'] != 'ok' ||
+        _text(restored?['restoredPid']) != startupPid ||
+        _text(restored?['token']) != rootToken ||
+        _text(restored?['generation']) != rootGeneration ||
+        _text(restored?['marker']) == null ||
+        restoredContent == null) {
+      return false;
+    }
+    final recordedCapabilities = _asMap(startup['brokerCapabilities']);
+    if (recordedCapabilities == null ||
+        recordedCapabilities['status'] != 'ok' ||
+        !_sameCapabilities(recordedCapabilities, capabilities)) {
+      return false;
+    }
+
+    var hasFolderPick = false;
+    var hasDifferentPid = false;
+    for (final record in history) {
+      final recordStartup = _asMap(record['startup']);
+      final recordProcess = _asMap(recordStartup?['process']);
+      if (record['schema'] != 1 ||
+          recordProcess == null ||
+          recordProcess['appContainer'] != 'true' ||
+          _text(recordProcess['packageFamily']) != packageFamily ||
+          _text(recordProcess['packageVersion']) == null) {
+        continue;
+      }
+      final recordPid = _text(recordProcess['pid']);
+      final folderPick = _asMap(record['folderPick']);
+      if (folderPick?['status'] != 'ok' ||
+          folderPick?['reopen'] != 'ok' ||
+          folderPick?['fileIo'] != 'ok' ||
+          _text(folderPick?['token']) != rootToken ||
+          _text(folderPick?['generation']) != rootGeneration ||
+          _text(folderPick?['marker']) != _text(restored?['marker']) ||
+          _text(folderPick?['markerContent']) != restoredContent) {
+        continue;
+      }
+      hasFolderPick = true;
+      if (recordPid != null && recordPid != startupPid) {
+        hasDifferentPid = true;
+      }
+    }
+    return hasFolderPick && hasDifferentPid;
+  }
+
+  static Future<Map<String, Object?>?> _readEvidence(File file) async {
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      return _asMap(decoded);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Map<String, Object?>? _asMap(Object? value) {
+    if (value is! Map) return null;
+    return <String, Object?>{
+      for (final entry in value.entries) entry.key.toString(): entry.value,
+    };
+  }
+
+  static String? _text(Object? value) {
+    if (value == null) return null;
+    final text = value.toString();
+    return text.isEmpty ? null : text;
+  }
+
+  static bool _sameCapabilities(
+    Map<String, Object?> recorded,
+    BrokerCapabilities live,
+  ) {
+    return recorded['platform'] == live.platform &&
+        recorded['credentials'] == live.credentials &&
+        recorded['staging'] == live.staging &&
+        recorded['atomicCreate'] == live.atomicCreate &&
+        recorded['conditionalReplace'] == live.conditionalReplace &&
+        recorded['conditionalDelete'] == live.conditionalDelete &&
+        recorded['temporaryPermission'] == live.temporaryPermission;
+  }
+
+  static bool _sameRestore(
+    Map<String, Object?>? recorded,
+    Map<String, Object?> live,
+  ) {
+    final recordedContent = _text(
+      recorded?['restoredContent'] ?? recorded?['markerContent'],
+    );
+    final liveContent = _text(live['restoredContent'] ?? live['markerContent']);
+    return recorded?['status'] == 'ok' &&
+        recorded?['fileIo'] == 'ok' &&
+        _text(recorded?['token']) == _text(live['token']) &&
+        _text(recorded?['generation']) == _text(live['generation']) &&
+        _text(recorded?['marker']) == _text(live['marker']) &&
+        recordedContent == liveContent;
+  }
+
+  static bool _sameRoot(BrokerRoot? current, SyncRuntimeTarget target) {
+    return current?.token == target.rootToken &&
+        current?.generation == target.rootGeneration;
+  }
+}
+
 final class _ConfiguredRemoteSnapshotProvider
     implements RemoteSnapshotProvider {
   const _ConfiguredRemoteSnapshotProvider(this.client);
@@ -1066,36 +1404,10 @@ final class _ProductionCapabilityCheck {
         active.generation != target.rootGeneration) {
       return const SyncGateState(
         status: SyncGateStatus.unavailable,
-        title: '同步等待授权',
-        message: '当前授权目录已变化，请重新确认目录后再同步。',
+        title: 'Sync waiting for authorization',
+        message: 'The authorized folder has changed. Confirm folder access again before syncing.',
       );
     }
-    final evidence = evidenceGate;
-    if (evidence == null) {
-      return const SyncGateState(
-        status: SyncGateStatus.unavailable,
-        title: '同步待验证',
-        message: '平台文件安全证据尚未完成，暂不能同步。',
-      );
-    }
-    try {
-      if (!await evidence.verify(target, token: token)) {
-        return const SyncGateState(
-          status: SyncGateStatus.unavailable,
-          title: '同步待验证',
-          message: '平台文件安全证据尚未通过，暂不能同步。',
-        );
-      }
-    } on SyncCancelled {
-      rethrow;
-    } catch (_) {
-      return const SyncGateState(
-        status: SyncGateStatus.unavailable,
-        title: '同步待验证',
-        message: '平台文件安全证据暂不可用，暂不能同步。',
-      );
-    }
-    token.throwIfCancelled();
     late final BrokerCapabilities capabilities;
     try {
       capabilities = await MethodChannelBrokerCapabilities(channel: channel)
@@ -1105,18 +1417,18 @@ final class _ProductionCapabilityCheck {
     } catch (_) {
       return const SyncGateState(
         status: SyncGateStatus.unavailable,
-        title: '平台条件未满足',
-        message: '平台文件安全能力暂不可用，暂不能同步。',
+        title: 'Platform requirements not met',
+        message: 'Platform file safety capabilities are unavailable. Sync is currently unavailable.',
       );
     }
     token.throwIfCancelled();
-    if (!capabilities.canCreateOnly ||
-        !capabilities.canConditionalReplace ||
-        !capabilities.canConditionalDelete) {
+    if (!capabilities.canVerifiedCreate ||
+        !capabilities.canVerifiedBackupReplace ||
+        !capabilities.canVerifiedBackupDelete) {
       return const SyncGateState(
         status: SyncGateStatus.unavailable,
-        title: '平台条件未满足',
-        message: '本地文件安全条件尚未验证，暂不能同步。',
+        title: 'Platform requirements not met',
+        message: 'The platform cannot verify, preserve, and recover local file changes. Sync is currently unavailable.',
       );
     }
     try {
@@ -1124,16 +1436,18 @@ final class _ProductionCapabilityCheck {
       token.throwIfCancelled();
       return const SyncGateState(
         status: SyncGateStatus.ready,
-        title: '同步已就绪',
-        message: '授权、远端连接和安全条件已验证。',
+        title: 'Ready to sync',
+        message: 'Folder access, the remote connection, and safety requirements are verified.',
       );
     } on SyncCancelled {
       rethrow;
-    } catch (_) {
-      return const SyncGateState(
+    } catch (error) {
+      return SyncGateState(
         status: SyncGateStatus.unavailable,
-        title: '远端连接未验证',
-        message: 'WebDAV 兼容性尚未通过，暂不能同步。',
+        title: 'Remote connection not verified',
+        message: error is SyncRuntimeNotReady
+            ? error.message
+            : syncFailureMessage(error),
       );
     }
   }
@@ -1199,6 +1513,18 @@ final class SyncTuneComposition {
           ),
         if (webDavSettingsPort != null)
           webDavSettingsPortProvider.overrideWithValue(webDavSettingsPort!),
+        webDavConnectionCheckPortProvider.overrideWithValue(
+          WebDavConnectionChecker(
+            savedSettings: webDavSettingsPort is WebDavSettingsLoader
+                ? webDavSettingsPort as WebDavSettingsLoader
+                : null,
+            transportChannel: channel,
+          ),
+        ),
+        if (database != null)
+          languagePreferencePortProvider.overrideWithValue(
+            DatabaseLanguagePreferencePort(database!),
+          ),
       ],
       child: child,
     );
@@ -1232,14 +1558,17 @@ final class SyncTuneComposition {
       } catch (_) {
         await candidate?.closeStore();
         database = null;
-        initializationError = '本地数据服务初始化失败，同步与收藏持久化已禁用。';
+        initializationError = 'Local data service initialization failed. Sync and favorites persistence are disabled.';
       }
     } else {
-      initializationError = '平台未提供应用私有数据库位置，同步与收藏持久化已禁用。';
+      initializationError = 'The platform did not provide a private database location. Sync and favorites persistence are disabled.';
     }
 
     final targets = CompositionTargetPort();
     final brokerRoot = MutableBrokerRootPort();
+    final effectiveEvidenceGate =
+        runtimeEvidenceGate ??
+        PersistedRuntimeEvidenceGate(channel: brokerChannel, root: brokerRoot);
     WebDavSettingsPort? configuredWebDav = webDavSettingsPort;
     if (configuredWebDav == null && database != null) {
       configuredWebDav = DatabaseWebDavSettingsPort(
@@ -1299,9 +1628,12 @@ final class SyncTuneComposition {
             channel: brokerChannel,
           ),
           targets: targets,
+          transportChannel: brokerChannel,
+          root: brokerRoot,
         );
         configuredWebDavClient = client;
         runner.services = CompositionSyncServices(
+          remoteMusicImport: (token) => client.importCloudMusic(token: token),
           localSnapshots: localSnapshots,
           remoteSnapshots: _ConfiguredRemoteSnapshotProvider(client),
           baseline: database,
@@ -1313,11 +1645,12 @@ final class SyncTuneComposition {
             channel: brokerChannel,
             root: brokerRoot,
             client: client,
-            evidenceGate: runtimeEvidenceGate,
+            evidenceGate: effectiveEvidenceGate,
           ).call,
         );
       } catch (_) {
-        initializationError ??= '同步服务初始化失败，同步保持禁用。';
+        initializationError ??=
+            'Sync service initialization failed. Sync remains disabled.';
       }
     }
     final runtime = ForegroundSyncRuntime(targetPort: targets, runner: runner);
@@ -1471,7 +1804,9 @@ final class SyncTuneComposition {
     final token = result['token']?.toString() ?? '';
     final generation = result['generation']?.toString() ?? '';
     if (path.isEmpty || token.isEmpty || generation.isEmpty) {
-      throw StateError('系统选择器没有返回有效授权根目录');
+      throw StateError(
+        'The system picker did not return a valid authorized root folder',
+      );
     }
     return RootGrant(path: path, token: token, generation: generation);
   }

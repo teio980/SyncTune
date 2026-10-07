@@ -36,7 +36,9 @@ final class MusicTrack {
     try {
       parsedPath = SyncPath.parse(path);
     } on FormatException {
-      throw const FormatException('原生扫描返回了无效音乐条目');
+      throw const FormatException(
+        'The native scan returned an invalid music entry',
+      );
     }
     final lastSegment = parsedPath.segments.last;
     final dot = lastSegment.lastIndexOf('.');
@@ -51,7 +53,9 @@ final class MusicTrack {
         actualExtension != extension ||
         size == null ||
         size < 0) {
-      throw const FormatException('原生扫描返回了无效音乐条目');
+      throw const FormatException(
+        'The native scan returned an invalid music entry',
+      );
     }
     return MusicTrack(
       relativePath: path,
@@ -137,7 +141,7 @@ class MusicScanController extends Notifier<MusicScanState> {
       state = MusicScanState(
         status: MusicScanStatus.failed,
         generation: currentGrant?.generation ?? grant.generation,
-        error: '授权根目录已变化，请重新选择后扫描',
+        error: 'The authorized root folder has changed. Select it again before scanning.',
       );
       return;
     }
@@ -149,20 +153,28 @@ class MusicScanController extends Notifier<MusicScanState> {
     try {
       final result = await ref.read(musicScannerPortProvider).scan(grant);
       if (result['status'] != 'ok') {
-        throw StateError(result['error']?.toString() ?? '音乐扫描未完成');
+        throw StateError(
+          result['error']?.toString() ?? 'The music scan did not finish',
+        );
       }
       final returnedGeneration = result['generation']?.toString() ?? '';
       if (returnedGeneration != grant.generation) {
-        throw StateError('授权根目录在扫描期间发生变化，请重新扫描');
+        throw StateError(
+          'The authorized root folder changed during the scan. Scan again.',
+        );
       }
       final rawItems = result['items'];
       if (rawItems is! List) {
-        throw const FormatException('原生扫描没有返回条目列表');
+        throw const FormatException(
+          'The native scan did not return an entry list',
+        );
       }
       final tracks = <MusicTrack>[];
       for (final item in rawItems) {
         if (item is! Map<Object?, Object?>) {
-          throw const FormatException('原生扫描包含无效音乐条目');
+          throw const FormatException(
+            'The native scan contains an invalid music entry',
+          );
         }
         tracks.add(MusicTrack.fromMap(item));
       }
@@ -242,7 +254,9 @@ final class MusicFavoritesViewModel extends Notifier<Set<String>> {
       _setMessage(null);
     } catch (_) {
       if (_disposed || epoch != _epoch) return;
-      _setMessage('收藏读取失败，当前显示的收藏可能不完整。');
+      _setMessage(
+        'Could not load favorites. The displayed favorites may be incomplete.',
+      );
     }
   }
 
@@ -273,7 +287,11 @@ final class MusicFavoritesViewModel extends Notifier<Set<String>> {
       await port.setFavorite(grant: grant, track: track, value: value);
       if (!_currentTrack(epoch, key, request)) return;
       _failedTracks.remove(key);
-      _setMessage(_failedTracks.isEmpty ? null : '收藏保存失败，请稍后重试。');
+      _setMessage(
+        _failedTracks.isEmpty
+            ? null
+            : 'Could not save favorites. Try again later.',
+      );
     } catch (_) {
       if (!_currentTrack(epoch, key, request)) return;
       final rollback = <String>{...state};
@@ -284,7 +302,7 @@ final class MusicFavoritesViewModel extends Notifier<Set<String>> {
       }
       state = Set.unmodifiable(rollback);
       _failedTracks.add(key);
-      _setMessage('收藏保存失败，请稍后重试。');
+      _setMessage('Could not save favorites. Try again later.');
     }
   }
 

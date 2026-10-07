@@ -101,6 +101,9 @@ void main() {
     await a;
 
     expect(container.read(musicFavoritesProvider), <String>{'entry-b'});
-    expect(container.read(musicFavoritesMessageProvider), '收藏保存失败，请稍后重试。');
+    expect(
+      container.read(musicFavoritesMessageProvider),
+      'Could not save favorites. Try again later.',
+    );
   });
 }

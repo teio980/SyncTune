@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'sync_theme.dart';
+import '../localization/strings.dart';
 
 /// Consistent page frame used by the three top-level modules.
 class SyncTunePageScaffold extends StatelessWidget {
@@ -19,7 +20,11 @@ class SyncTunePageScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     return CustomScrollView(
       slivers: [
-        SliverAppBar(title: Text(title), floating: true, actions: actions),
+        SliverAppBar(
+          title: LocalizedText(title),
+          floating: true,
+          actions: actions,
+        ),
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(
             SyncTuneTokens.space24,
@@ -49,11 +54,9 @@ class SyncTuneSection extends StatelessWidget {
     required this.title,
     required this.child,
     super.key,
-    this.description,
   });
 
   final String title;
-  final String? description;
   final Widget child;
 
   @override
@@ -62,11 +65,7 @@ class SyncTuneSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: textTheme.headlineSmall),
-        if (description != null) ...[
-          const SizedBox(height: SyncTuneTokens.space8),
-          Text(description!),
-        ],
+        LocalizedText(title, style: textTheme.headlineSmall),
         const SizedBox(height: SyncTuneTokens.space16),
         child,
       ],
@@ -79,9 +78,9 @@ enum SyncTuneStatusTone { neutral, positive, warning, error }
 class SyncTuneStatusCard extends StatelessWidget {
   const SyncTuneStatusCard({
     required this.title,
-    required this.message,
     required this.icon,
     super.key,
+    this.message = '',
     this.tone = SyncTuneStatusTone.neutral,
     this.action,
   });
@@ -113,9 +112,14 @@ class SyncTuneStatusCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: SyncTuneTokens.space4),
-                  Text(message),
+                  LocalizedText(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (message.isNotEmpty) ...[
+                    const SizedBox(height: SyncTuneTokens.space4),
+                    LocalizedText(message),
+                  ],
                   if (action != null) ...[
                     const SizedBox(height: SyncTuneTokens.space12),
                     Align(alignment: Alignment.centerLeft, child: action!),
@@ -139,13 +143,13 @@ class SyncTuneKeyValue extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: '$label：$value',
+      label: '${SyncTuneStrings.of(context).text(label)}: $value',
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: SyncTuneTokens.space4),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(width: 100, child: Text(label)),
+            SizedBox(width: 100, child: LocalizedText(label)),
             Expanded(child: SelectableText(value)),
           ],
         ),

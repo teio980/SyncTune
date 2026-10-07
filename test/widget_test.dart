@@ -31,6 +31,11 @@ void main() {
       expect(find.text('音乐'), findsWidgets);
       expect(find.text('同步'), findsWidgets);
       expect(find.text('设置'), findsWidgets);
+      expect(
+        Localizations.localeOf(tester.element(find.byType(Scaffold).first))
+            .languageCode,
+        'zh',
+      );
       await tester.tap(find.byIcon(Icons.sync_outlined));
       await tester.pump();
       final button = tester.widget<FilledButton>(find.byType(FilledButton));

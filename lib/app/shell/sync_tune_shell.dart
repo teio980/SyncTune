@@ -2,6 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+
+import '../localization/language.dart';
+import '../localization/strings.dart';
 
 import '../music/music_page.dart';
 import '../settings/settings_page.dart';
@@ -43,9 +47,9 @@ class SyncTuneShell extends ConsumerStatefulWidget {
   final String? initializationMessage;
 
   static const modules = <({IconData icon, String label})>[
-    (icon: Icons.library_music_outlined, label: '音乐'),
-    (icon: Icons.sync_outlined, label: '同步'),
-    (icon: Icons.settings_outlined, label: '设置'),
+    (icon: Icons.library_music_outlined, label: 'Music'),
+    (icon: Icons.sync_outlined, label: 'Sync'),
+    (icon: Icons.settings_outlined, label: 'Settings'),
   ];
 
   @override
@@ -114,8 +118,17 @@ class _SyncTuneShellState extends ConsumerState<SyncTuneShell>
   Widget build(BuildContext context) {
     final selected = ref.watch(selectedModuleProvider);
     final themeMode = ref.watch(themeModeProvider);
+    final language = ref.watch(languageProvider).language;
 
     return MaterialApp(
+      locale: language.locale,
+      supportedLocales: SyncTuneStrings.supportedLocales,
+      localizationsDelegates: const [
+        SyncTuneStrings.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       title: 'SyncTune',
       theme: syncTuneLightTheme(),
       darkTheme: syncTuneDarkTheme(),
@@ -127,6 +140,7 @@ class _SyncTuneShellState extends ConsumerState<SyncTuneShell>
       ),
       home: LayoutBuilder(
         builder: (context, constraints) {
+          final strings = SyncTuneStrings.of(context);
           final compact = constraints.maxWidth < 600;
           final wide = constraints.maxWidth >= 1000;
           final content = _ModulePage(
@@ -146,7 +160,7 @@ class _SyncTuneShellState extends ConsumerState<SyncTuneShell>
                   for (final item in SyncTuneShell.modules)
                     NavigationDestination(
                       icon: Icon(item.icon),
-                      label: item.label,
+                      label: strings.text(item.label),
                     ),
                 ],
               ),
@@ -163,7 +177,7 @@ class _SyncTuneShellState extends ConsumerState<SyncTuneShell>
                     for (final item in SyncTuneShell.modules)
                       NavigationRailDestination(
                         icon: Icon(item.icon),
-                        label: Text(item.label),
+                        label: LocalizedText(item.label),
                       ),
                   ],
                 ),
@@ -194,7 +208,7 @@ class _SyncTuneShellState extends ConsumerState<SyncTuneShell>
             0,
           ),
           child: SyncTuneStatusCard(
-            title: '本地服务初始化未完成',
+            title: 'Local services could not initialize',
             message: message,
             icon: Icons.warning_amber_outlined,
             tone: SyncTuneStatusTone.warning,

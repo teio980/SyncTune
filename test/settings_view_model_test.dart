@@ -55,7 +55,7 @@ void main() {
 
     final state = container.read(webDavSettingsProvider);
     expect(state.status, WebDavSaveStatus.saved);
-    expect(state.message, contains('清理失败'));
+    expect(state.message, contains('cleanup failed'));
   });
 }
 
@@ -65,5 +65,6 @@ final class _WarningSave
   Future<void> save(WebDavSettings settings) async {}
 
   @override
-  String? takeWarning() => '旧 WebDAV 凭据清理失败，当前设置仍已生效。';
+  String? takeWarning() =>
+      'Old WebDAV credential cleanup failed. The current settings remain active.';
 }

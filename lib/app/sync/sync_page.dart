@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../design/sync_components.dart';
 import '../design/sync_theme.dart';
+import '../localization/strings.dart';
 import '../music/music_scan.dart';
 import 'sync_gate.dart';
 import 'sync_status_view_model.dart';
@@ -36,12 +39,14 @@ class SyncPage extends ConsumerWidget {
         hasCompleteScan &&
         gate.canRun &&
         !gate.isBusy &&
+        !runtimeSnapshot.isRunning &&
         syncStatus != 'running';
     final canRetry =
         controls != null &&
         grant != null &&
         rootStatus == 'ready' &&
         hasCompleteScan &&
+        !gate.isBusy &&
         runtimeSnapshot.canRetry;
 
     final status = _statusCard(
@@ -52,31 +57,41 @@ class SyncPage extends ConsumerWidget {
       gate: gate,
       runtimeSnapshot: runtimeSnapshot,
       blockedByScan: blockedByScan,
-      onRefreshGate: runtime == null
+      onRefreshGate: runtime == null || runtimeSnapshot.isRunning
           ? null
           : () => ref.read(syncGateProvider.notifier).refresh(runtime),
     );
 
     return SyncTunePageScaffold(
-      title: '同步',
+      title: 'Sync',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SyncTuneSection(
-            title: '同步状态',
-            description: '同步只会在目录扫描完整且所有安全条件通过后执行。',
-            child: status,
-          ),
+          SyncTuneSection(title: 'Sync status', child: status),
           const SizedBox(height: SyncTuneTokens.space24),
           Wrap(
             spacing: SyncTuneTokens.space12,
             runSpacing: SyncTuneTokens.space8,
             children: [
+              if (runtimeSnapshot.requiresRemoteImport &&
+                  runtime is RemoteMusicImportControls)
+                FilledButton.icon(
+                  onPressed: canRetry
+                      ? () => ref
+                            .read(syncGateProvider.notifier)
+                            .importCloudMusic(runtime)
+                      : null,
+                  icon: const Icon(Icons.cloud_download_outlined),
+                  label: const LocalizedText('Import cloud music'),
+                ),
               FilledButton.icon(
-                onPressed: runtimeSnapshot.isRunning && controls != null
+                onPressed:
+                    runtimeSnapshot.phase == ForegroundRunPhase.cancelling
+                    ? null
+                    : runtimeSnapshot.isRunning && controls != null
                     ? controls.cancel
                     : canRetry
-                    ? controls.retry
+                    ? () => ref.read(syncGateProvider.notifier).retry(runtime)
                     : canRun
                     ? () => ref.read(syncGateProvider.notifier).run(runtime)
                     : null,
@@ -88,29 +103,34 @@ class SyncPage extends ConsumerWidget {
                     : Icon(
                         runtimeSnapshot.canRetry ? Icons.replay : Icons.sync,
                       ),
-                label: Text(
+                label: LocalizedText(
                   runtimeSnapshot.isRunning
-                      ? '取消同步'
+                      ? runtimeSnapshot.phase == ForegroundRunPhase.cancelling
+                            ? 'Canceling sync'
+                            : 'Cancel sync'
                       : runtimeSnapshot.canRetry
-                      ? '重试'
+                      ? 'Retry'
                       : gate.isBusy
-                      ? '处理中…'
-                      : '开始同步',
+                      ? 'Working…'
+                      : 'Start sync',
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: runtime == null
+                onPressed:
+                    runtime == null || runtimeSnapshot.isRunning || gate.isBusy
                     ? null
                     : () =>
                           ref.read(syncGateProvider.notifier).refresh(runtime),
                 icon: const Icon(Icons.refresh),
-                label: const Text('重新检查'),
+                label: const LocalizedText('Check again'),
               ),
             ],
           ),
           if (syncStatus != 'idle') ...[
             const SizedBox(height: SyncTuneTokens.space12),
-            Text('当前任务：$syncStatus'),
+            LocalizedText(
+              'Current task: ${SyncTuneStrings.of(context).text(syncStatus)}',
+            ),
           ],
         ],
       ),
@@ -127,40 +147,42 @@ class SyncPage extends ConsumerWidget {
     required bool blockedByScan,
     required VoidCallback? onRefreshGate,
   }) {
+    if (runtimeSnapshot.isRunning) {
+      return _SyncRunDetails(snapshot: runtimeSnapshot);
+    }
     if (grant == null && (rootStatus == 'error' || rootStatus == 'revoked')) {
       return const SyncTuneStatusCard(
-        title: '目录授权已失效',
-        message: '请在设置中重新选择音乐根目录。',
+        title: 'Folder access expired',
+        message: 'Choose the folder again in Settings.',
         icon: Icons.folder_off_outlined,
         tone: SyncTuneStatusTone.error,
       );
     }
     if (grant == null || rootStatus == 'none') {
       return const SyncTuneStatusCard(
-        title: '尚未授权音乐根目录',
-        message: '选择并确认音乐根目录后，才能检查同步条件。',
+        title: 'Music root folder access required',
+        message: 'Select a music folder in Settings.',
         icon: Icons.lock_outline,
       );
     }
     if (rootStatus == 'loading') {
       return const SyncTuneStatusCard(
-        title: '正在确认目录授权',
-        message: '授权确认完成后才能继续。',
+        title: 'Checking folder access',
         icon: Icons.hourglass_top_outlined,
       );
     }
     if (scan.status == MusicScanStatus.loading) {
       return const SyncTuneStatusCard(
-        title: '扫描进行中',
-        message: '扫描完成后才能生成安全的同步计划。',
+        title: 'Scan in progress',
+        message: 'Finish the scan before syncing.',
         icon: Icons.sync_outlined,
         tone: SyncTuneStatusTone.warning,
       );
     }
     if (scan.status == MusicScanStatus.failed) {
       return const SyncTuneStatusCard(
-        title: '扫描状态不可用',
-        message: '请在音乐页面重新扫描，确认目录完整可读。',
+        title: 'Scan status unavailable',
+        message: 'Rescan on Music to confirm folder access.',
         icon: Icons.error_outline,
         tone: SyncTuneStatusTone.error,
       );
@@ -168,11 +190,11 @@ class SyncPage extends ConsumerWidget {
     if (blockedByScan) {
       return SyncTuneStatusCard(
         title: scan.status == MusicScanStatus.ready && !scan.complete
-            ? '扫描不完整'
-            : '尚未完成扫描',
+            ? 'Incomplete scan'
+            : 'Scan required',
         message: scan.status == MusicScanStatus.ready && !scan.complete
-            ? '部分扫描不能安排删除操作，请完成一次完整扫描。'
-            : '请先在音乐页面完成扫描，再检查同步条件。',
+            ? 'Partial scans cannot schedule deletions. Run a full scan.'
+            : 'Scan music before syncing.',
         icon: Icons.warning_amber,
         tone: SyncTuneStatusTone.warning,
       );
@@ -181,9 +203,14 @@ class SyncPage extends ConsumerWidget {
         runtimeSnapshot.phase == ForegroundRunPhase.cancelled) {
       return SyncTuneStatusCard(
         title: runtimeSnapshot.phase == ForegroundRunPhase.cancelled
-            ? '同步已取消'
-            : '同步未完成',
-        message: runtimeSnapshot.message,
+            ? 'Sync canceled'
+            : 'Sync incomplete',
+        message: [
+          runtimeSnapshot.message,
+          if (runtimeSnapshot.progress != null) runtimeSnapshot.progress!.stage,
+          if (runtimeSnapshot.progress?.path != null)
+            runtimeSnapshot.progress!.path!,
+        ].join('\n'),
         icon: runtimeSnapshot.phase == ForegroundRunPhase.cancelled
             ? Icons.cancel_outlined
             : Icons.error_outline,
@@ -192,16 +219,20 @@ class SyncPage extends ConsumerWidget {
     }
     if (runtimeSnapshot.phase == ForegroundRunPhase.succeeded) {
       return SyncTuneStatusCard(
-        title: '同步已完成',
-        message: runtimeSnapshot.message,
+        title: 'Sync complete',
         icon: Icons.verified_outlined,
         tone: SyncTuneStatusTone.positive,
       );
     }
     if (gate.status == SyncGateStatus.unavailable) {
-      return const SyncTuneStatusCard(
-        title: '同步尚未开放',
-        message: '同步适配器和平台安全闸门尚未完成验收，当前不可执行。',
+      const initial = SyncGateState.unavailable();
+      final showRuntimeReason =
+          runtimeSnapshot.phase == ForegroundRunPhase.blocked &&
+          gate.title == initial.title &&
+          gate.message == initial.message;
+      return SyncTuneStatusCard(
+        title: showRuntimeReason ? 'Sync blocked' : gate.title,
+        message: showRuntimeReason ? runtimeSnapshot.message : gate.message,
         icon: Icons.lock_outline,
       );
     }
@@ -219,8 +250,97 @@ class SyncPage extends ConsumerWidget {
           : OutlinedButton.icon(
               onPressed: onRefreshGate,
               icon: const Icon(Icons.refresh),
-              label: const Text('检查同步条件'),
+              label: const LocalizedText('Check sync requirements'),
             ),
+    );
+  }
+}
+
+class _SyncRunDetails extends StatefulWidget {
+  const _SyncRunDetails({required this.snapshot});
+  final ForegroundRuntimeSnapshot snapshot;
+
+  @override
+  State<_SyncRunDetails> createState() => _SyncRunDetailsState();
+}
+
+class _SyncRunDetailsState extends State<_SyncRunDetails> {
+  late final Timer _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker.cancel();
+    super.dispose();
+  }
+
+  String _bytes(int bytes) => bytes < 1024
+      ? '$bytes B'
+      : bytes < 1024 * 1024
+      ? '${(bytes / 1024).toStringAsFixed(1)} KB'
+      : '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+
+  @override
+  Widget build(BuildContext context) {
+    final snapshot = widget.snapshot;
+    final progress = snapshot.progress;
+    final start = snapshot.lastStartedAtUtc;
+    final seconds = start == null
+        ? 0
+        : DateTime.now().toUtc().difference(start).inSeconds.clamp(0, 864000);
+    final lastUpdate = snapshot.lastProgressAtUtc ?? start;
+    final waiting =
+        lastUpdate != null &&
+        DateTime.now().toUtc().difference(lastUpdate) >=
+            const Duration(seconds: 15);
+    final totalBytes = progress?.totalBytes;
+    final totalItems = progress?.totalItems;
+    final ratio = totalBytes != null && totalBytes > 0
+        ? (progress!.completedBytes / totalBytes).clamp(0.0, 1.0)
+        : totalItems != null && totalItems > 0
+        ? (progress!.completedItems / totalItems).clamp(0.0, 1.0)
+        : null;
+    return SyncTuneStatusCard(
+      title: snapshot.phase == ForegroundRunPhase.cancelling
+          ? 'Canceling sync'
+          : snapshot.phase == ForegroundRunPhase.checking
+          ? 'Checking sync requirements'
+          : 'Sync in progress',
+      message: snapshot.message,
+      icon: Icons.sync,
+      action: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (progress?.path != null) ...[
+            Text(progress!.path!, key: const ValueKey('sync-current-file')),
+            const SizedBox(height: 8),
+          ],
+          LinearProgressIndicator(value: ratio),
+          const SizedBox(height: 8),
+          if (totalItems != null || progress?.path != null)
+            LocalizedText(
+              '${progress!.itemLabel}: ${progress.completedItems}${totalItems == null ? '' : ' / $totalItems'}',
+            ),
+          if (totalBytes != null)
+            LocalizedText(
+              'File data processed: ${_bytes(progress!.completedBytes)} / ${_bytes(totalBytes)}',
+            ),
+          LocalizedText(
+            'Elapsed: ${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}',
+          ),
+          if (waiting)
+            const LocalizedText(
+              'Waiting for the current operation to respond…',
+            ),
+        ],
+      ),
     );
   }
 }

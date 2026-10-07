@@ -63,16 +63,33 @@ String? canonicalWebDavEndpoint(String value) {
 
 enum WebDavSaveStatus { idle, saving, saved, unavailable, failed }
 
+enum WebDavConnectionStatus { idle, checking, connected, unavailable, failed }
+
 final class WebDavSettingsState {
   const WebDavSettingsState({
     this.settings = const WebDavSettings(),
     this.status = WebDavSaveStatus.idle,
     this.message,
+    this.connectionStatus = WebDavConnectionStatus.idle,
+    this.connectionMessage,
   });
 
   final WebDavSettings settings;
   final WebDavSaveStatus status;
   final String? message;
+  final WebDavConnectionStatus connectionStatus;
+  final String? connectionMessage;
+}
+
+abstract interface class WebDavConnectionCheckPort {
+  Future<void> check(WebDavSettings settings);
+}
+
+/// Contains only a user-facing explanation, never transport or credential data.
+final class WebDavConnectionCheckException implements Exception {
+  const WebDavConnectionCheckException(this.message);
+
+  final String message;
 }
 
 abstract interface class WebDavSettingsPort {
@@ -94,6 +111,9 @@ abstract interface class WebDavSettingsWarningPort {
 }
 
 final webDavSettingsPortProvider = Provider<WebDavSettingsPort?>((ref) => null);
+final webDavConnectionCheckPortProvider = Provider<WebDavConnectionCheckPort?>(
+  (ref) => null,
+);
 
 final class WebDavSettingsViewModel extends Notifier<WebDavSettingsState> {
   int _request = 0;
@@ -150,13 +170,14 @@ final class WebDavSettingsViewModel extends Notifier<WebDavSettingsState> {
   }
 
   Future<void> save(WebDavSettingsPort? port) async {
+    if (state.connectionStatus == WebDavConnectionStatus.checking) return;
     final request = ++_request;
     if (port == null) {
       if (_disposed || request != _request) return;
       state = WebDavSettingsState(
         settings: state.settings,
         status: WebDavSaveStatus.unavailable,
-        message: '远端服务尚未连接',
+        message: 'The remote service is not connected',
       );
       return;
     }
@@ -165,7 +186,7 @@ final class WebDavSettingsViewModel extends Notifier<WebDavSettingsState> {
       state = WebDavSettingsState(
         settings: state.settings,
         status: WebDavSaveStatus.failed,
-        message: '请输入有效的 HTTPS WebDAV 地址',
+        message: 'Enter a valid HTTPS WebDAV URL',
       );
       return;
     }
@@ -184,16 +205,64 @@ final class WebDavSettingsViewModel extends Notifier<WebDavSettingsState> {
       state = WebDavSettingsState(
         settings: settings,
         status: WebDavSaveStatus.saved,
-        message: warning ?? '设置已保存',
+        message: warning ?? 'Settings saved',
       );
     } catch (_) {
       if (_disposed || request != _request) return;
       state = WebDavSettingsState(
         settings: settings,
         status: WebDavSaveStatus.failed,
-        message: '设置保存失败，请稍后重试',
+        message: 'Could not save settings. Try again later.',
       );
     }
+  }
+
+  Future<void> checkConnection(WebDavConnectionCheckPort? port) async {
+    if (state.status == WebDavSaveStatus.saving ||
+        state.connectionStatus == WebDavConnectionStatus.checking) {
+      return;
+    }
+    final request = ++_request;
+    final settings = state.settings;
+    if (port == null) {
+      _setConnection(
+        WebDavConnectionStatus.unavailable,
+        'Connection checking is currently unavailable.',
+      );
+      return;
+    }
+    if (!settings.isValid) {
+      _setConnection(
+        WebDavConnectionStatus.failed,
+        'Enter a valid HTTPS WebDAV URL',
+      );
+      return;
+    }
+    _setConnection(WebDavConnectionStatus.checking, 'Checking connection…');
+    try {
+      await port.check(settings);
+      if (_disposed || request != _request) return;
+      _setConnection(
+        WebDavConnectionStatus.connected,
+        'The WebDAV server is reachable and the folder is accessible.',
+      );
+    } catch (error) {
+      if (_disposed || request != _request) return;
+      _setConnection(
+        WebDavConnectionStatus.failed,
+        error is WebDavConnectionCheckException ? error.message : 'Could not check the connection. Check your settings and try again.',
+      );
+    }
+  }
+
+  void _setConnection(WebDavConnectionStatus status, String message) {
+    state = WebDavSettingsState(
+      settings: state.settings,
+      status: state.status,
+      message: state.message,
+      connectionStatus: status,
+      connectionMessage: message,
+    );
   }
 }
 
