@@ -137,11 +137,19 @@ final class _Store implements LocalObjectStore {
   Future<void> delete(
     SyncPath path, {
     required LocalCondition condition,
+    SyncEntry? tombstone,
     String? operationId,
     CancellationToken token = const NeverCancelled(),
   }) async {
     deleteCalls++;
   }
+
+  @override
+  Future<void> saveTombstone(
+    SyncPath path,
+    SyncEntry tombstone, {
+    CancellationToken token = const NeverCancelled(),
+  }) async {}
 
   @override
   Future<void> updateFavorite(

@@ -13,6 +13,7 @@ final class MusicTrack {
     required this.size,
     required this.extension,
     this.id,
+    this.sha256,
     this.favorite = false,
   });
 
@@ -20,6 +21,7 @@ final class MusicTrack {
   final int size;
   final String extension;
   final String? id;
+  final String? sha256;
   final bool favorite;
 
   factory MusicTrack.fromMap(Map<Object?, Object?> value) {
@@ -28,6 +30,9 @@ final class MusicTrack {
     final extension = value['extension']?.toString().toLowerCase() ?? '';
     final idValue = value['id']?.toString();
     final id = idValue == null || idValue.isEmpty ? null : idValue;
+    final sha256Value = value['sha256']?.toString();
+    final sha256 =
+        sha256Value == null || sha256Value.isEmpty ? null : sha256Value;
     final favorite = value['favorite'] == true;
     final size = sizeValue is int ? sizeValue : null;
     final segments = path.split('/');
@@ -62,6 +67,7 @@ final class MusicTrack {
       size: size,
       extension: extension,
       id: id,
+      sha256: sha256,
       favorite: favorite,
     );
   }
@@ -210,6 +216,18 @@ class MusicScanController extends Notifier<MusicScanState> {
         error: '$error',
       );
     }
+  }
+
+  void removeTrack(String relativePath) {
+    state = MusicScanState(
+      status: state.status,
+      tracks: state.tracks
+          .where((track) => track.relativePath != relativePath)
+          .toList(growable: false),
+      generation: state.generation,
+      complete: state.complete,
+      error: state.error,
+    );
   }
 
   void clear() {

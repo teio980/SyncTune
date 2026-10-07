@@ -50,8 +50,12 @@ final class SyncExecutor {
               stage: switch (op.kind) {
                 SyncOperationKind.putLocalToRemote => 'Uploading',
                 SyncOperationKind.putRemoteToLocal => 'Downloading',
-                SyncOperationKind.deleteLocal => 'Deleting local file',
-                SyncOperationKind.deleteRemote => 'Deleting cloud file',
+                SyncOperationKind.deleteLocal ||
+                SyncOperationKind.tombstoneLocal =>
+                  'Deleting local file',
+                SyncOperationKind.deleteRemote ||
+                SyncOperationKind.tombstoneRemote =>
+                  'Deleting cloud file',
                 SyncOperationKind.conflict => 'Preserving conflicting files',
                 _ => 'Updating favorites',
               },
@@ -247,6 +251,29 @@ final class SyncExecutor {
             tombstone: op.source,
             metadataCondition: op.metadataCondition,
             token: token);
+      case SyncOperationKind.tombstoneRemote:
+        if (op.source == null) {
+          throw NeedsRescan('missing remote tombstone source');
+        }
+        final metaCond = op.metadataCondition ?? const CreateOnly();
+        if (checkpoints[op.id]?.state != JournalState.staged) {
+          final intent = JournalRecord(
+            planId: plan.planId,
+            generation: plan.generation,
+            operationId: op.id,
+            path: op.path,
+            state: JournalState.staged,
+            atUtc: clock.nowUtc,
+            metadataCondition: metaCond.fingerprint,
+          );
+          await journal.append(intent);
+          checkpoints[op.id] = intent;
+          token.throwIfCancelled();
+        }
+        await remote.putTombstone(op.path,
+            tombstone: op.source!,
+            metadataCondition: metaCond,
+            token: token);
       case SyncOperationKind.deleteLocal:
         final localCondition = op.localCondition;
         if (localCondition is! LocalMatchSha256) {
@@ -267,7 +294,28 @@ final class SyncExecutor {
           token.throwIfCancelled();
         }
         await local.delete(op.path,
-            condition: localCondition, operationId: op.id, token: token);
+            condition: localCondition,
+            tombstone: op.source,
+            operationId: op.id,
+            token: token);
+      case SyncOperationKind.tombstoneLocal:
+        if (op.source == null) {
+          throw NeedsRescan('missing local tombstone source');
+        }
+        if (checkpoints[op.id]?.state != JournalState.staged) {
+          final intent = JournalRecord(
+            planId: plan.planId,
+            generation: plan.generation,
+            operationId: op.id,
+            path: op.path,
+            state: JournalState.staged,
+            atUtc: clock.nowUtc,
+          );
+          await journal.append(intent);
+          checkpoints[op.id] = intent;
+          token.throwIfCancelled();
+        }
+        await local.saveTombstone(op.path, op.source!, token: token);
       case SyncOperationKind.updateFavoriteToRemote:
         if (op.condition == null || op.source == null) {
           throw NeedsRescan('missing metadata ETag');

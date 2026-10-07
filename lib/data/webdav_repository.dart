@@ -1544,6 +1544,22 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
   }
 
   @override
+  Future<void> putTombstone(
+    SyncPath path, {
+    required SyncEntry tombstone,
+    required RemoteCondition metadataCondition,
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    token.throwIfCancelled();
+    await putMetadata(
+      path,
+      tombstone,
+      condition: metadataCondition,
+      token: token,
+    );
+  }
+
+  @override
   Future<void> updateFavorite(
     SyncPath path,
     FavoriteStamp stamp, {

@@ -1252,9 +1252,17 @@ final class _UnusedLocalObjects implements LocalObjectStore {
   }) => _unused();
 
   @override
+  Future<void> saveTombstone(
+    SyncPath path,
+    SyncEntry tombstone, {
+    CancellationToken token = const NeverCancelled(),
+  }) => _unused();
+
+  @override
   Future<void> delete(
     SyncPath path, {
     required LocalCondition condition,
+    SyncEntry? tombstone,
     String? operationId,
     CancellationToken token = const NeverCancelled(),
   }) => _unused();
@@ -1283,6 +1291,14 @@ final class _UnusedRemoteRepository implements RemoteRepository {
     Stream<List<int>> content, {
     required SyncEntry entry,
     required RemoteCondition condition,
+    required RemoteCondition metadataCondition,
+    CancellationToken token = const NeverCancelled(),
+  }) => _unused();
+
+  @override
+  Future<void> putTombstone(
+    SyncPath path, {
+    required SyncEntry tombstone,
     required RemoteCondition metadataCondition,
     CancellationToken token = const NeverCancelled(),
   }) => _unused();

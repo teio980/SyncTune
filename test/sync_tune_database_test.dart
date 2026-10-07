@@ -358,4 +358,51 @@ void main() {
       expect(restored.entries[newPath]!.id, 'stable-song');
     },
   );
+
+  test('persists and updates deletion task records', () async {
+    final database = SyncTuneDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final task = DeletionTaskRecord(
+      operationId: 'del-1',
+      rootId: 'root-1',
+      generation: 'g1',
+      remoteNamespace: 'remote-ns',
+      entryId: 'entry-1',
+      relativePath: 'song.mp3',
+      expectedSha256: 'a' * 64,
+      stage: 'pending_local',
+      createdAt: DateTime.utc(2026, 1, 1),
+      updatedAt: DateTime.utc(2026, 1, 1),
+    );
+    await database.saveDeletionTask(task);
+    var pending = await database.loadPendingDeletionTasks(
+      rootId: 'root-1',
+      generation: 'g1',
+      remoteNamespace: 'remote-ns',
+    );
+    expect(pending, hasLength(1));
+    expect(pending.first.operationId, 'del-1');
+    expect(pending.first.stage, 'pending_local');
+
+    await database.updateDeletionTaskStage('del-1', 'local_deleted');
+    pending = await database.loadPendingDeletionTasks(
+      rootId: 'root-1',
+      generation: 'g1',
+      remoteNamespace: 'remote-ns',
+    );
+    expect(pending.first.stage, 'local_deleted');
+
+    await database.markDeletionTasksCompleted(
+      rootId: 'root-1',
+      generation: 'g1',
+      remoteNamespace: 'remote-ns',
+      relativePaths: ['song.mp3'],
+    );
+    pending = await database.loadPendingDeletionTasks(
+      rootId: 'root-1',
+      generation: 'g1',
+      remoteNamespace: 'remote-ns',
+    );
+    expect(pending, isEmpty);
+  });
 }

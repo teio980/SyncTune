@@ -562,17 +562,29 @@ final class _MemoryPhone
   Future<void> delete(
     SyncPath path, {
     required LocalCondition condition,
+    SyncEntry? tombstone,
     String? operationId,
     CancellationToken token = const NeverCancelled(),
   }) async {
     final entry = entries[path]!;
     bytes.remove(path);
-    entries[path] = SyncEntry.tombstone(
-      id: entry.id,
-      path: path,
-      modifiedAtUtc: DateTime.now().toUtc(),
-      favorite: entry.favorite,
-    );
+    entries[path] = tombstone ??
+        SyncEntry.tombstone(
+          id: entry.id,
+          path: path,
+          modifiedAtUtc: DateTime.now().toUtc(),
+          favorite: entry.favorite,
+        );
+  }
+
+  @override
+  Future<void> saveTombstone(
+    SyncPath path,
+    SyncEntry tombstone, {
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    bytes.remove(path);
+    entries[path] = tombstone;
   }
 
   @override

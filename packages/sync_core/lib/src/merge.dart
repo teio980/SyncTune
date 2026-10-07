@@ -17,6 +17,48 @@ final class ThreeWayMerger {
       {required SyncEntry? base,
       required SyncEntry? local,
       required SyncEntry? remote}) {
+    if (local == null && remote == null) {
+      return const MergeResult(MergeChoice.unchanged);
+    }
+
+    final localDeleted = local != null && local.isDeleted;
+    final remoteDeleted = remote != null && remote.isDeleted;
+
+    if (localDeleted && remoteDeleted) {
+      final favorite = local.favorite.merge(remote.favorite);
+      final chooseLocal = local.revision > remote.revision ||
+          (local.revision == remote.revision &&
+              _stableIdentityKey(local).compareTo(_stableIdentityKey(remote)) <= 0);
+      final chosen =
+          (chooseLocal ? local : remote).copyWith(favorite: favorite);
+      return MergeResult(
+        chooseLocal ? MergeChoice.local : MergeChoice.remote,
+        entry: chosen,
+      );
+    }
+
+    if (localDeleted) {
+      final favorite = local.favorite.merge(
+        remote?.favorite ??
+            const FavoriteStamp(value: false, lamport: 0, deviceId: ''),
+      );
+      return MergeResult(
+        MergeChoice.local,
+        entry: local.copyWith(favorite: favorite),
+      );
+    }
+
+    if (remoteDeleted) {
+      final favorite = remote.favorite.merge(
+        local?.favorite ??
+            const FavoriteStamp(value: false, lamport: 0, deviceId: ''),
+      );
+      return MergeResult(
+        MergeChoice.remote,
+        entry: remote.copyWith(favorite: favorite),
+      );
+    }
+
     // A first sync can encounter the same bytes carrying independently
     // generated identities (for example, a local catalog UUID and a remote
     // descriptor UUID). Treat that as one version and choose the identity by
@@ -53,12 +95,6 @@ final class ThreeWayMerger {
     }
     if (local == null) return MergeResult(MergeChoice.remote, entry: remote);
     if (remote == null) return MergeResult(MergeChoice.local, entry: local);
-    if (local.isDeleted != remote.isDeleted) {
-      final live = local.isDeleted ? remote : local;
-      return MergeResult(
-          local.isDeleted ? MergeChoice.remote : MergeChoice.local,
-          entry: live.copyWith(favorite: local.favorite.merge(remote.favorite)));
-    }
     final favorite = local.favorite.merge(remote.favorite);
     final localChanged = base == null || !local.contentEquals(base);
     final remoteChanged = base == null || !remote.contentEquals(base);

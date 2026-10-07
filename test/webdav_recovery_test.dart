@@ -267,6 +267,7 @@ final class _FormalLocal implements LocalObjectStore, LocalSnapshotProvider {
   Future<void> delete(
     SyncPath path, {
     required LocalCondition condition,
+    SyncEntry? tombstone,
     String? operationId,
     CancellationToken token = const NeverCancelled(),
   }) async {
@@ -274,7 +275,21 @@ final class _FormalLocal implements LocalObjectStore, LocalSnapshotProvider {
         entries[path]?.sha256 != condition.sha256) {
       throw const NeedsRescan('formal local delete CAS failed');
     }
-    entries.remove(path);
+    if (tombstone != null) {
+      entries[path] = tombstone;
+    } else {
+      entries.remove(path);
+    }
+    files.remove(path);
+  }
+
+  @override
+  Future<void> saveTombstone(
+    SyncPath path,
+    SyncEntry tombstone, {
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    entries[path] = tombstone;
     files.remove(path);
   }
 
