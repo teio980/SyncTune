@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Intent
 import android.content.ActivityNotFoundException
 import android.net.Uri
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -34,7 +36,9 @@ import java.util.concurrent.Executors
 class MainActivity : FlutterActivity() {
     private val channelName = "synctune/probe"
     private val pickRootRequest = 701
+    private val notificationPermissionRequest = 702
     private var pendingRootResult: MethodChannel.Result? = null
+    private var pendingNotificationResult: MethodChannel.Result? = null
     @Volatile private var rootBusy = false
     private val prefsName = "synctune-root"
     private val scanExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -163,6 +167,35 @@ class MainActivity : FlutterActivity() {
             )
             "credentialRoundTrip" -> brokerCall(result) { credentialRoundTrip() }
             "restoreFolder" -> restoreFolder(result)
+            "syncNotificationStart" -> {
+                val title = call.argument<String>("title") ?: "SyncTune"
+                val message = call.argument<String>("message") ?: "Syncing…"
+                SyncForegroundService.start(this, title, message)
+                result.success(mapOf("status" to "ok"))
+            }
+            "syncNotificationUpdate" -> {
+                val title = call.argument<String>("title") ?: "SyncTune"
+                val message = call.argument<String>("message") ?: "Syncing…"
+                val progress = call.argument<Int>("progress")
+                val max = call.argument<Int>("max")
+                val indeterminate = call.argument<Boolean>("indeterminate") ?: false
+                SyncForegroundService.update(this, title, message, progress, max, indeterminate)
+                result.success(mapOf("status" to "ok"))
+            }
+            "syncNotificationFinish" -> {
+                val title = call.argument<String>("title") ?: "SyncTune"
+                val message = call.argument<String>("message") ?: "Sync complete"
+                val success = call.argument<Boolean>("success") ?: true
+                SyncForegroundService.finish(this, title, message, success)
+                result.success(mapOf("status" to "ok"))
+            }
+            "syncNotificationCancel" -> {
+                SyncForegroundService.cancel(this)
+                result.success(mapOf("status" to "ok"))
+            }
+            "requestNotificationPermission" -> {
+                requestNotificationPermission(result)
+            }
             else -> result.notImplemented()
         }
     }
@@ -1732,6 +1765,39 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun requestNotificationPermission(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED) {
+                result.success(mapOf("status" to "granted"))
+            } else {
+                pendingNotificationResult = result
+                requestPermissions(
+                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                    notificationPermissionRequest,
+                )
+            }
+        } else {
+            result.success(mapOf("status" to "granted"))
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == notificationPermissionRequest) {
+            val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            pendingNotificationResult?.success(
+                mapOf("status" to if (granted) "granted" else "denied")
+            )
+            pendingNotificationResult = null
+        }
+    }
+
     override fun onDestroy() {
         engineAlive = false
         readSessions.keys.toList().forEach { closeRead(it) }
@@ -1742,6 +1808,7 @@ class MainActivity : FlutterActivity() {
             }
         }
         pendingRootResult = null
+        pendingNotificationResult = null
         rootBusy = false
         scanExecutor.shutdownNow()
         super.onDestroy()
