@@ -3,18 +3,31 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:synctune_sync_core/synctune_sync_core.dart';
 import 'package:xml/xml.dart';
 
-final class WebDavCompatibilityError extends NeedsRescan {
+class WebDavCompatibilityError extends NeedsRescan {
   const WebDavCompatibilityError(this.message) : super(message);
   final String message;
 
   @override
   String toString() => 'WebDAV compatibility error: $message';
+}
+
+final class WebDavHttpError extends WebDavCompatibilityError {
+  WebDavHttpError(this.status, this.path) : super('HTTP $status for $path.');
+  final int status;
+  final SyncPath path;
+}
+
+final class RemoteMusicImportRequired extends WebDavCompatibilityError {
+  RemoteMusicImportRequired(this.path)
+    : super('Missing identity metadata for ${path.value}.');
+  final SyncPath path;
 }
 
 final class WebDavResource {
@@ -673,7 +686,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     final status = response.statusCode ?? 0;
     if (status == 412) throw RemotePreconditionFailed(path);
     if (status < 200 || status >= 300) {
-      throw WebDavCompatibilityError('HTTP $status for $path.');
+      throw WebDavHttpError(status, path);
     }
   }
 
@@ -685,7 +698,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     final status = response.statusCode ?? 0;
     if (status == 412) throw RemotePreconditionFailed(path);
     if (!accepted.contains(status)) {
-      throw WebDavCompatibilityError('HTTP $status for $path.');
+      throw WebDavHttpError(status, path);
     }
   }
 
@@ -1022,12 +1035,15 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     token.throwIfCancelled();
     await _ensureParentCollections(path, token: token);
     token.throwIfCancelled();
+    var sentBytes = 0;
     final response = await _request<Response<dynamic>>(
       token,
       (cancelToken) => _dio.putUri<dynamic>(
         _resourceUri(path),
         data: content.map((chunk) {
           token.throwIfCancelled();
+          sentBytes += chunk.length;
+          reportSyncBytes(token, sentBytes, total: entry.size);
           return chunk;
         }),
         options: Options(
@@ -1385,14 +1401,16 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
                 ? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)
                 : null)
           : (DateTime.tryParse(modifiedText) ?? HttpDate.parse(modifiedText));
-      if (etag == null || size == null || size < 0 || modified == null) {
+      if (size == null || size < 0 || modified == null) {
         throw const WebDavCompatibilityError('PROPFIND metadata was invalid.');
       }
-      _strongEtag(etag, path);
+      // Collection ETags are optional; only file bytes and descriptors use CAS.
+      // Apache/mod_dav commonly omits getetag for directories.
+      if (!collection) _strongEtag(etag, path);
       resources.add(
         WebDavResource(
           path: path,
-          etag: etag,
+          etag: etag ?? '',
           size: size,
           modifiedAtUtc: modified.toUtc(),
           isCollection: collection,
@@ -1456,6 +1474,98 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
     'opus',
   };
 
+  /// Explicit user-requested adoption. A retry skips descriptors already
+  /// created, and all new descriptors use create-only CAS. Song bytes are
+  /// only read, never overwritten or deleted by this operation.
+  Future<void> importExistingMusic({
+    CancellationToken token = const NeverCancelled(),
+  }) async {
+    final files = <WebDavResource>[];
+    final pending = <SyncPath>[];
+    final visited = <SyncPath>{};
+    void collect(Iterable<WebDavResource> resources) {
+      for (final resource in resources) {
+        if (_isMetadataPath(resource.path)) continue;
+        if (resource.isCollection) {
+          pending.add(resource.path);
+        } else if (_isMusic(resource.path)) {
+          files.add(resource);
+          if (files.length > 10000) {
+            throw const WebDavCompatibilityError(
+              'WebDAV snapshot exceeded its item safety limit.',
+            );
+          }
+        }
+      }
+    }
+
+    collect(await _repository.propfindRoot(token: token));
+    while (pending.isNotEmpty) {
+      token.throwIfCancelled();
+      final directory = pending.removeAt(0);
+      if (!visited.add(directory)) continue;
+      if (visited.length > 1024 || directory.segments.length > 64) {
+        throw const WebDavCompatibilityError(
+          'WebDAV collection traversal exceeded its safety limit.',
+        );
+      }
+      collect(await _repository.propfind(directory, token: token));
+    }
+    final random = Random.secure();
+    var processed = 0;
+    for (final resource in files) {
+      token.throwIfCancelled();
+      reportSyncProgress(
+        token,
+        SyncProgress(
+          stage: 'Importing cloud music',
+          path: resource.path.value,
+          completedItems: processed++,
+          totalItems: files.length,
+          totalBytes: resource.size,
+        ),
+      );
+      final existing = await _readEntryMetadata(
+        resource.path,
+        token: token,
+        allowMissing: true,
+      );
+      if (existing != null) continue;
+      final content = await _repository.readWithEtag(
+        resource.path,
+        token: token,
+        ifMatch: resource.etag,
+      );
+      if (content == null) {
+        throw const NeedsRescan('remote content disappeared');
+      }
+      final actual = await _hashReadResult(content, token);
+      if (content.etag != resource.etag || actual.length != resource.size) {
+        throw const NeedsRescan('remote content changed during import');
+      }
+      final identity = List<int>.generate(
+        16,
+        (_) => random.nextInt(256),
+      ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+      await _repository.adoptExistingFile(
+        SyncEntry.file(
+          id: 'import-$identity',
+          path: resource.path,
+          size: actual.length,
+          modifiedAtUtc: resource.modifiedAtUtc,
+          sha256: actual.sha256,
+        ),
+        token: token,
+      );
+    }
+  }
+
+  bool _isMusic(SyncPath path) {
+    final dot = path.value.lastIndexOf('.');
+    return dot >= 0 &&
+        _musicExtensions.contains(path.value.substring(dot + 1).toLowerCase());
+  }
+
   @override
   Future<RemoteSnapshot> capture(
     SyncRoot root, {
@@ -1501,13 +1611,18 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
         pending.add(resource.path);
         continue;
       }
-      final dot = resource.path.value.lastIndexOf('.');
-      if (dot < 0 ||
-          !_musicExtensions.contains(
-            resource.path.value.substring(dot + 1).toLowerCase(),
-          )) {
+      if (!_isMusic(resource.path)) {
         continue;
       }
+      reportSyncProgress(
+        token,
+        SyncProgress(
+          stage: 'Verifying cloud file',
+          path: resource.path.value,
+          completedItems: entries.length,
+          totalBytes: resource.size,
+        ),
+      );
       if (entries.length >= 10000 && !entries.containsKey(resource.path)) {
         throw const WebDavCompatibilityError(
           'WebDAV snapshot exceeded its item safety limit.',
@@ -1679,13 +1794,11 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
     final documentResult = await _repository.readWithEtag(
       WebDavRepository._entryMetadataPath(path),
       token: token,
-      allowMissing: allowMissing,
+      allowMissing: true,
     );
     if (documentResult == null) {
       if (allowMissing) return null;
-      throw WebDavCompatibilityError(
-        'Missing identity metadata for ${path.value}.',
-      );
+      throw RemoteMusicImportRequired(path);
     }
     final bytes = <int>[];
     await for (final chunk in documentResult.stream) {
@@ -1855,6 +1968,7 @@ Future<_HashedReadResult> _hashReadResult(
     token.throwIfCancelled();
     converter.add(chunk);
     length += chunk.length;
+    reportSyncBytes(token, length);
   }
   converter.close();
   final digest = accumulator.digest;

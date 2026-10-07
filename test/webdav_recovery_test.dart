@@ -267,6 +267,7 @@ final class _FormalLocal implements LocalObjectStore, LocalSnapshotProvider {
   Future<void> delete(
     SyncPath path, {
     required LocalCondition condition,
+    String? operationId,
     CancellationToken token = const NeverCancelled(),
   }) async {
     if (condition is! LocalMatchSha256 ||
@@ -317,6 +318,55 @@ Future<SyncRunResult> _run(
 );
 
 void main() {
+  test(
+    'ordinary cloud music imports, downloads, and confirms the baseline',
+    () async {
+      final server = _StrictDav();
+      server.collections.add('/music/album');
+      const contentPath = '/music/album/歌曲.mp3';
+      server.files[contentPath] = _DavFile(utf8.encode('abc'), '"original"');
+      final writes = <String>[];
+      server.beforeFetch = (options) {
+        if (options.method == 'PUT' || options.method == 'DELETE') {
+          writes.add('${options.method} ${server.key(options.uri)}');
+        }
+      };
+      final dio = Dio()..httpClientAdapter = server;
+      final remote = WebDavRepository(
+        dio: dio,
+        baseUri: Uri.parse('https://formal.invalid/music/'),
+      );
+      final db = SyncTuneDatabase(NativeDatabase.memory());
+      addTearDown(() async {
+        await db.closeStore();
+        dio.close(force: true);
+      });
+      final local = _FormalLocal();
+      await expectLater(
+        _run(db, local, remote, 'before-import'),
+        throwsA(isA<RemoteMusicImportRequired>()),
+      );
+      expect(writes, isEmpty);
+      await WebDavRemoteSnapshotProvider(repository: remote)
+          .importExistingMusic();
+      final first = await _run(db, local, remote, 'after-import');
+      first.requireConfirmed();
+      final path = SyncPath.parse('album/歌曲.mp3');
+      expect(utf8.decode(local.files[path]!), 'abc');
+      expect(local.entries[path]!.id, startsWith('import-'));
+      expect(
+        (await db.load(_root))!.entries[path]!.id,
+        local.entries[path]!.id,
+      );
+      expect(writes, hasLength(1));
+      expect(writes.single, startsWith('PUT /music/.synctune/entries/'));
+      expect(server.files[contentPath]!.etag, '"original"');
+      final second = await _run(db, local, remote, 'second-sync');
+      second.requireConfirmed();
+      expect(second.plan.operations, isEmpty);
+    },
+  );
+
   test(
     'formal ordinary upload recovery proves bytes and latest descriptor CAS',
     () async {
