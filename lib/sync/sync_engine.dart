@@ -46,23 +46,28 @@ final class SyncEngine {
     _running = true;
     var progress = const SyncProgress(phase: SyncPhase.recovering);
     var networkBytesDone = 0;
-    var networkBytesTotal = 0;
+    int? networkBytesTotal;
+    var transferPlanReady = false;
     Future<void> report(SyncProgress next) async {
       progress = next;
       await onProgress?.call(next);
     }
 
     Future<void> onNetworkBytes(SyncPath path, int bytes) async {
+      if (!transferPlanReady) return;
       networkBytesDone += bytes;
-      if (networkBytesDone > networkBytesTotal) {
-        networkBytesTotal = networkBytesDone;
+      final plannedTotal = networkBytesTotal;
+      if (plannedTotal != null && networkBytesDone > plannedTotal) {
+        // A changed source no longer fits the scan estimate. Keep the actual
+        // byte count and stop claiming a known denominator.
+        networkBytesTotal = null;
       }
       await report(
         progress.copyWith(
-          phase: SyncPhase.transferring,
           currentFile: path.value,
           bytesDone: networkBytesDone,
           totalBytes: networkBytesTotal,
+          clearTotalBytes: networkBytesTotal == null,
         ),
       );
     }
@@ -122,13 +127,14 @@ final class SyncEngine {
           phase: SyncPhase.scanning,
           currentFile: '',
           filesDone: 0,
-          fileCount: 0,
           bytesDone: 0,
-          totalBytes: 0,
+          clearFileCount: true,
+          clearTotalBytes: true,
         ),
       );
       final baseline = stateStore.loadBaseline();
       var scanBytes = 0;
+      final scannedPaths = <String>{};
       var scanFiles = 0;
       Future<void> scanByte(SyncPath path, int bytes) async {
         scanBytes += bytes;
@@ -138,19 +144,21 @@ final class SyncEngine {
             currentFile: path.value,
             filesDone: scanFiles,
             bytesDone: scanBytes,
-            totalBytes: 0,
+            clearFileCount: true,
+            clearTotalBytes: true,
           ),
         );
       }
 
       Future<void> scanFile(SyncPath path) async {
-        scanFiles++;
+        if (scannedPaths.add(path.value)) scanFiles++;
         await report(
           progress.copyWith(
             phase: SyncPhase.scanning,
             currentFile: path.value,
             filesDone: scanFiles,
-            totalBytes: 0,
+            clearFileCount: true,
+            clearTotalBytes: true,
           ),
         );
       }
@@ -186,15 +194,24 @@ final class SyncEngine {
       );
       networkBytesDone = 0;
       networkBytesTotal = plan.fold<int>(0, (sum, item) {
-        if (item.sha256 == null) return sum;
-        final needsLocal =
-            item.previousLocalHash != item.sha256 &&
-            item.sourceSide == ContentSide.remote;
-        final needsRemote = item.previousRemoteHash != item.sha256;
-        return sum +
-            (needsLocal ? item.size : 0) +
-            (needsRemote ? item.size : 0);
+        final expected = item.sha256;
+        if (expected == null) return sum;
+        final needsLocal = local[item.path]?.sha256 != expected;
+        final needsRemote = remote[item.path]?.sha256 != expected;
+        var bytes = sum;
+        // A WebDAV PUT is the only network work needed to update the remote
+        // target, regardless of which side supplied its staged content.
+        if (needsRemote) bytes += item.size;
+        if (needsLocal && item.sourceSide == ContentSide.remote) {
+          final sourcePath = item.sourcePath;
+          final source = sourcePath == null ? null : remote[sourcePath];
+          // A file already downloaded into the scan cache was read during
+          // scanning and does not consume another GET during this operation.
+          if (source?.cachedFile == null) bytes += item.size;
+        }
+        return bytes;
       });
+      transferPlanReady = true;
       await report(
         progress.copyWith(
           phase: SyncPhase.comparing,
@@ -234,7 +251,7 @@ final class SyncEngine {
         filesDone++;
         await report(
           progress.copyWith(
-            phase: SyncPhase.verifying,
+            phase: SyncPhase.transferring,
             currentFile: desired.path.value,
             fileCount: plan.length,
             filesDone: filesDone,
@@ -248,10 +265,10 @@ final class SyncEngine {
         progress.copyWith(
           phase: SyncPhase.verifying,
           currentFile: '',
-          filesDone: filesDone,
-          fileCount: plan.length,
-          bytesDone: networkBytesDone,
-          totalBytes: networkBytesTotal,
+          filesDone: 0,
+          bytesDone: 0,
+          clearFileCount: true,
+          clearTotalBytes: true,
         ),
       );
       final verifiedFileCount = await _verifyWholeTree(
@@ -259,7 +276,6 @@ final class SyncEngine {
         cache,
         cancellation,
         report,
-        progress,
       );
       cancellation.throwIfCancelled();
       await report(
@@ -345,6 +361,17 @@ final class SyncEngine {
         );
       }
       if (!remoteCanContinue) {
+        // Older versions did not mark a rejected backup GET for a rescan.
+        // Reconcile those journals only while the local target is unchanged,
+        // no local commit is partial, and neither side is marked committed.
+        await _markRescanIfUntouched(operation, cancellation);
+        final pending = stateStore.loadPending().firstWhere(
+          (item) => item.id == operation.id,
+        );
+        if (pending.needsRescan) {
+          await _cleanup(pending, cancellation, forRescan: true);
+          return;
+        }
         throw SyncFailure(
           'The WebDAV file changed during an interrupted operation; recovery data was kept.',
           path: operation.path,
@@ -536,7 +563,8 @@ final class SyncEngine {
               cancellation,
             );
           } on SyncFailure catch (error) {
-            if (error.conditionalWriteRejected) {
+            if (error.statusCode == HttpStatus.preconditionFailed) {
+              // The conditional backup GET can fail before DELETE is sent.
               await _markRescanIfUntouched(operation, cancellation);
             }
             rethrow;
@@ -566,7 +594,8 @@ final class SyncEngine {
             onBytes: onNetworkBytes,
           );
         } on SyncFailure catch (error) {
-          if (error.conditionalWriteRejected) {
+          if (error.statusCode == HttpStatus.preconditionFailed) {
+            // A rejected backup GET also leaves both targets untouched.
             await _markRescanIfUntouched(operation, cancellation);
           }
           rethrow;
@@ -805,17 +834,49 @@ final class SyncEngine {
     SyncSettings settings,
     Directory cache,
     CancellationToken cancellation,
-    SyncProgressCallback? onProgress,
-    SyncProgress current,
+    SyncProgressCallback onProgress,
   ) async {
     final baseline = stateStore.loadBaseline();
-    final localScan = await localStore.scan(cancellation);
+    var scanBytes = 0;
+    var scanFiles = 0;
+    final scannedPaths = <String>{};
+    Future<void> scanByte(SyncPath path, int bytes) async {
+      scanBytes += bytes;
+      await onProgress(
+        SyncProgress(
+          phase: SyncPhase.verifying,
+          currentFile: path.value,
+          filesDone: scanFiles,
+          bytesDone: scanBytes,
+        ),
+      );
+    }
+
+    Future<void> scanFile(SyncPath path) async {
+      if (scannedPaths.add(path.value)) scanFiles++;
+      await onProgress(
+        SyncProgress(
+          phase: SyncPhase.verifying,
+          currentFile: path.value,
+          filesDone: scanFiles,
+          bytesDone: scanBytes,
+        ),
+      );
+    }
+
+    final localScan = await localStore.scan(
+      cancellation,
+      onBytes: scanByte,
+      onFile: scanFile,
+    );
     cancellation.throwIfCancelled();
     final remoteScan = await webDav.scan(
       settings,
       baseline,
       cache,
       cancellation,
+      onMusicFile: scanFile,
+      onBytes: scanByte,
     );
     cancellation.throwIfCancelled();
     final local = indexFiles(localScan.files, windowsCaseSensitive: false);
@@ -829,6 +890,13 @@ final class SyncEngine {
       allPaths,
       local: localScan.occupiedPaths,
       remote: remoteScan.occupiedPaths,
+    );
+    await onProgress(
+      SyncProgress(
+        phase: SyncPhase.verifying,
+        fileCount: allPaths.length,
+        filesDone: 0,
+      ),
     );
     var verifiedFiles = 0;
     for (final path in allPaths) {
@@ -846,8 +914,8 @@ final class SyncEngine {
         );
       }
       verifiedFiles++;
-      await onProgress?.call(
-        current.copyWith(
+      await onProgress(
+        SyncProgress(
           phase: SyncPhase.verifying,
           currentFile: path.value,
           filesDone: verifiedFiles,
@@ -855,10 +923,9 @@ final class SyncEngine {
         ),
       );
     }
-    await onProgress?.call(
-      current.copyWith(
+    await onProgress(
+      SyncProgress(
         phase: SyncPhase.verifying,
-        currentFile: '',
         filesDone: verifiedFiles,
         fileCount: allPaths.length,
       ),

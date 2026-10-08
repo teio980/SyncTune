@@ -27,8 +27,7 @@ final class SyncTuneStrings {
     'Open settings': '打开设置',
     'Local folder': '本地文件夹',
     'WebDAV URL': 'WebDAV 地址',
-    'Enter the complete HTTPS URL, including the remote music directory.':
-        '请输入完整的 HTTPS 地址，包含远程音乐目录。',
+    'Include the remote music folder in the HTTPS URL.': 'HTTPS 地址中需包含远端音乐目录。',
     'Username': '用户名',
     'Password': '密码',
     'Choose music folder': '选择音乐文件夹',
@@ -36,10 +35,8 @@ final class SyncTuneStrings {
     'Enter an HTTPS WebDAV URL.': '请输入 HTTPS WebDAV 地址。',
     'Enter the WebDAV username.': '请输入 WebDAV 用户名。',
     'Enter the WebDAV password.': '请输入 WebDAV 密码。',
-    'This password will be saved in the system credential store.':
-        '此密码将保存到系统凭据存储中。',
-    'A password is saved for this account. Leave blank to keep it.':
-        '此账号已有已保存的密码。留空即可保留。',
+    'Stored in system credentials.': '保存在系统凭据中。',
+    'Leave blank to keep saved password.': '留空以保留已保存的密码。',
     'Show saved password': '显示已保存密码',
     'Hide password': '隐藏密码',
     'Test connection': '测试连接',
@@ -47,21 +44,20 @@ final class SyncTuneStrings {
     'WebDAV connection successful.': 'WebDAV 连接成功。',
     'Enter a password or use an account with a saved password.':
         '请输入密码，或使用已有已保存密码的账号。',
-    'Delete music?': '删除音乐？',
-    'This removes the selected files from this device. The next sync will propagate deletion for songs already in the sync history. Songs not yet registered from WebDAV may download again on the first sync.':
-        '这会从本设备删除所选歌曲。下次同步会传播已登记歌曲的删除；尚未登记的 WebDAV 歌曲可能在首次同步时重新下载。',
+    'Delete songs?': '删除所选歌曲？',
+    'Selected songs will be deleted now. Songs in sync history will also be deleted from WebDAV on the next sync. Unregistered WebDAV songs may be downloaded again on the first sync.':
+        '所选歌曲会立即删除；已登记同步的歌曲也会在下次同步时从 WebDAV 删除。尚未登记的云端歌曲可能在首次同步时重新下载。',
     'Cancel': '取消',
-    'Delete locally': '本地删除',
-    'Deleted locally. The next sync will compare both folders.':
-        '已从本地删除。下次同步时会比较双方文件夹。',
+    'Delete songs': '删除歌曲',
+    'Delete song': '删除歌曲',
+    'Deleted selected songs. Songs in sync history will also be deleted from WebDAV on the next sync.':
+        '已删除所选歌曲。已登记同步的歌曲也会在下次同步时从 WebDAV 删除。',
     'Recover the previous sync before deleting music.': '请先恢复上次同步，再删除音乐。',
     'The selected folder changed; refresh the list.': '所选文件夹已变化，请刷新列表。',
     'Refresh': '刷新',
     'songs': '首歌曲',
     'No music files found.': '没有找到音乐文件。',
     'Choose a local music folder in Settings.': '请在设置中选择本地音乐文件夹。',
-    'Music is listed from the selected folder. Deleting here removes only the chosen local song files.':
-        '此处列出所选文件夹中的音乐。删除只会移除所选本地歌曲文件。',
     'Save settings': '保存设置',
     'Language': '语言',
     'English': '英语',
@@ -80,18 +76,17 @@ final class SyncTuneStrings {
     'Sync failed': '同步失败',
     'Files': '文件',
     'Data': '数据',
+    'Files scanned': '已扫描文件',
+    'Data read': '已读取数据',
+    'Files processed': '已处理文件',
+    'Data to transfer': '待传输数据',
+    'Data transferred': '已传输数据',
+    'Files verified': '已复核文件',
     'No folder selected': '尚未选择文件夹',
-    'Enter a relative WebDAV directory, or leave it blank for the URL folder.':
-        '输入相对 WebDAV 目录；留空则使用地址对应的目录。',
-    'Changes apply after Save. The password is held in the system credential store.':
-        '保存后应用更改。密码保存在系统凭据存储中。',
-    'Settings cannot change while synchronization is running.': '同步运行期间不能更改设置。',
     'The previous sync must recover before changing the folder or account.':
         '更改文件夹或账号前，必须先恢复上次同步。',
     'System': '跟随系统',
     'Selected': '已选择',
-    'Files are matched by relative folder and filename. Sync starts only when you press Start.':
-        '文件按相对文件夹和文件名对应。点击“开始同步”后才会运行。',
   };
 }
 

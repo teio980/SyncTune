@@ -350,41 +350,46 @@ final class SyncProgress {
     this.phase = SyncPhase.idle,
     this.currentFile = '',
     this.filesDone = 0,
-    this.fileCount = 0,
+    this.fileCount,
     this.bytesDone = 0,
-    this.totalBytes = 0,
+    this.totalBytes,
     this.error = '',
   });
   final SyncPhase phase;
   final String currentFile;
   final int filesDone;
-  final int fileCount;
+  final int? fileCount;
   final int bytesDone;
-  final int totalBytes;
+  final int? totalBytes;
   final String error;
   bool get running =>
       phase != SyncPhase.idle &&
       phase != SyncPhase.complete &&
       phase != SyncPhase.cancelled &&
       phase != SyncPhase.failed;
-  double? get fraction => totalBytes > 0
-      ? (bytesDone / totalBytes).clamp(0.0, 1.0).toDouble()
-      : null;
+  double? get fraction {
+    final total = totalBytes;
+    return total != null && total > 0
+        ? (bytesDone / total).clamp(0.0, 1.0).toDouble()
+        : null;
+  }
   SyncProgress copyWith({
     SyncPhase? phase,
     String? currentFile,
     int? filesDone,
     int? fileCount,
+    bool clearFileCount = false,
     int? bytesDone,
     int? totalBytes,
+    bool clearTotalBytes = false,
     String? error,
   }) => SyncProgress(
     phase: phase ?? this.phase,
     currentFile: currentFile ?? this.currentFile,
     filesDone: filesDone ?? this.filesDone,
-    fileCount: fileCount ?? this.fileCount,
+    fileCount: clearFileCount ? null : fileCount ?? this.fileCount,
     bytesDone: bytesDone ?? this.bytesDone,
-    totalBytes: totalBytes ?? this.totalBytes,
+    totalBytes: clearTotalBytes ? null : totalBytes ?? this.totalBytes,
     error: error ?? this.error,
   );
 }

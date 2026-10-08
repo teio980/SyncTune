@@ -131,7 +131,10 @@ void main() {
           request.response.write('old');
         } else if (request.method == 'PUT') {
           putCount++;
-          condition = request.headers.value('if-match');
+          condition = request.headers.value('if');
+          expect(request.headers.value('if-match'), isNull);
+          expect(request.headers.value('cache-control'), 'no-cache');
+          expect(request.headers.value('pragma'), 'no-cache');
           await request.drain<void>();
           request.response.statusCode = 412;
         }
@@ -160,7 +163,7 @@ void main() {
         ),
       );
       expect(putCount, 1);
-      expect(condition, '"v1"');
+      expect(condition, '<${settings.serverUrl}/song.mp3> (["v1"])');
     },
   );
 

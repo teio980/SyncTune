@@ -131,12 +131,10 @@ void main() {
         'https://example.test/dav/Music/synctune',
       );
       expect(find.text('Remote folder'), findsNothing);
-      expect(
-        find.text(
-          'A password is saved for this account. Leave blank to keep it.',
-        ),
-        findsOneWidget,
-      );
+      final passwordField = tester.widget<TextField>(textField('Password'));
+      expect(passwordField.controller!.text, 'stored-password');
+      expect(passwordField.obscureText, isTrue);
+      expect(find.text('Stored in system credentials.'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Show saved password'));
       await tester.pumpAndSettle();
@@ -156,13 +154,7 @@ void main() {
       );
       expect(
         tester.widget<TextField>(textField('Password')).controller!.text,
-        isEmpty,
-      );
-      await tester.enterText(textField('Password'), 'test-password');
-      await tester.pump();
-      expect(
-        tester.widget<TextField>(textField('Password')).controller!.text,
-        'test-password',
+        'stored-password',
       );
 
       await tester.ensureVisible(find.text('Test connection'));
@@ -213,18 +205,29 @@ void main() {
       addTearDown(() => unmountApp(tester, harness));
 
       expect(find.text('song.mp3'), findsWidgets);
-      await tester.tap(find.byTooltip('Delete locally'));
+      expect(find.text('Delete songs (0)'), findsOneWidget);
+      await tester.tap(find.byTooltip('Delete song'));
       await tester.pumpAndSettle();
-      expect(find.text('Delete music?'), findsOneWidget);
+      expect(find.text('Delete songs?'), findsOneWidget);
       expect(
-        find.textContaining('The next sync will propagate deletion'),
+        find.textContaining(
+          'Songs in sync history will also be deleted from WebDAV on the next sync.',
+        ),
         findsOneWidget,
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Delete locally'));
+      expect(
+        find.textContaining(
+          'Unregistered WebDAV songs may be downloaded again on the first sync.',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete songs'));
       await tester.pumpAndSettle();
       expect(harness.musicLibrary.deleted, <String>['song.mp3']);
       expect(
-        find.text('Deleted locally. The next sync will compare both folders.'),
+        find.text(
+          'Deleted selected songs. Songs in sync history will also be deleted from WebDAV on the next sync.',
+        ),
         findsOneWidget,
       );
     },

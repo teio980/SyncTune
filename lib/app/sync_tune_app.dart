@@ -289,9 +289,9 @@ final class _MusicPageState extends State<_MusicPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(strings.text('Delete music?')),
+        title: Text(strings.text('Delete songs?')),
         content: Text(
-          '${strings.text('This removes the selected files from this device. The next sync will propagate deletion for songs already in the sync history. Songs not yet registered from WebDAV may download again on the first sync.')}'
+          '${strings.text('Selected songs will be deleted now. Songs in sync history will also be deleted from WebDAV on the next sync. Unregistered WebDAV songs may be downloaded again on the first sync.')} '
           '\n\n${targets.take(3).map((item) => item.path.value).join('\n')}'
           '${targets.length > 3 ? '\n…' : ''}',
         ),
@@ -302,7 +302,7 @@ final class _MusicPageState extends State<_MusicPage> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(strings.text('Delete locally')),
+            child: Text(strings.text('Delete songs')),
           ),
         ],
       ),
@@ -345,7 +345,7 @@ final class _MusicPageState extends State<_MusicPage> {
           _selected.clear();
           _message = errors.isEmpty
               ? strings.text(
-                  'Deleted locally. The next sync will compare both folders.',
+                  'Deleted selected songs. Songs in sync history will also be deleted from WebDAV on the next sync.',
                 )
               : errors.join('\n');
         });
@@ -398,8 +398,6 @@ final class _MusicPageState extends State<_MusicPage> {
               ),
             )
           else ...<Widget>[
-            SelectableText(settings.localRoot, maxLines: 2),
-            const SizedBox(height: 8),
             Row(
               children: <Widget>[
                 Expanded(
@@ -413,7 +411,7 @@ final class _MusicPageState extends State<_MusicPage> {
                       : () => _deleteSelected(),
                   icon: const Icon(Icons.delete_outline),
                   label: Text(
-                    '${SyncTuneStrings.of(context).text('Delete locally')} (${_selected.length})',
+                    '${SyncTuneStrings.of(context).text('Delete songs')} (${_selected.length})',
                   ),
                 ),
               ],
@@ -463,7 +461,7 @@ final class _MusicPageState extends State<_MusicPage> {
                           ),
                           trailing: IconButton(
                             tooltip: SyncTuneStrings.of(context)
-                                .text('Delete locally'),
+                                .text('Delete song'),
                             onPressed: blocked
                                 ? null
                                 : () => _deleteSelected(only: track),
@@ -472,12 +470,6 @@ final class _MusicPageState extends State<_MusicPage> {
                         );
                       },
                     ),
-            ),
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: LocalizedText(
-                'Music is listed from the selected folder. Deleting here removes only the chosen local song files.',
-              ),
             ),
           ],
         ],
@@ -528,20 +520,6 @@ final class _SyncHome extends StatelessWidget {
                     style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 16),
-                  _SideInfo(
-                    label: 'Local folder',
-                    value:
-                        settings?.localRoot ??
-                        SyncTuneStrings.of(context).text('No folder selected'),
-                  ),
-                  const SizedBox(height: 12),
-                  _SideInfo(
-                    label: 'WebDAV URL',
-                    value: settings == null
-                        ? 'No folder selected'
-                        : _remoteLabel(settings),
-                  ),
-                  const SizedBox(height: 22),
                   Text(
                     SyncTuneStrings.of(context).text(status),
                     style: Theme.of(context).textTheme.titleMedium,
@@ -559,14 +537,7 @@ final class _SyncHome extends StatelessWidget {
                   ],
                   if (running || progress.filesDone > 0) ...<Widget>[
                     const SizedBox(height: 8),
-                    Text(
-                      '${SyncTuneStrings.of(context).text('Files')}: '
-                      '${progress.filesDone} / ${progress.fileCount}',
-                    ),
-                    Text(
-                      '${SyncTuneStrings.of(context).text('Data')}: '
-                      '${_formatBytes(progress.bytesDone)} / ${_formatBytes(progress.totalBytes)}',
-                    ),
+                    SyncProgressSummary(progress: progress),
                   ],
                   if (progress.error.isNotEmpty) ...<Widget>[
                     const SizedBox(height: 12),
@@ -607,34 +578,115 @@ final class _SyncHome extends StatelessWidget {
               ),
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.only(top: 12),
-            child: LocalizedText(
-              'Files are matched by relative folder and filename. Sync starts only when you press Start.',
-            ),
-          ),
         ],
       );
     },
   );
 }
 
-final class _SideInfo extends StatelessWidget {
-  const _SideInfo({required this.label, required this.value});
-  final String label;
-  final String value;
+final class SyncProgressSummary extends StatelessWidget {
+  const SyncProgressSummary({super.key, required this.progress});
+
+  final SyncProgress progress;
+
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: <Widget>[
-      Text(
-        SyncTuneStrings.of(context).text(label),
-        style: Theme.of(context).textTheme.labelLarge,
-      ),
-      const SizedBox(height: 4),
-      SelectableText(value),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final strings = SyncTuneStrings.of(context);
+    final lines = <String>[];
+    String translated(String key) => strings.text(key);
+    String countLine(String label, int count) => '$label: $count';
+    String ratioLine(String label, int done, int? total) =>
+        '$label: $done${total == null ? '' : ' / $total'}';
+    String bytesLine(String label, int done, int? total) =>
+        '$label: ${_formatBytes(done)}'
+        '${total == null ? '' : ' / ${_formatBytes(total)}'}';
+
+    switch (progress.phase) {
+      case SyncPhase.scanning:
+        lines.add(countLine(translated('Files scanned'), progress.filesDone));
+        lines.add(bytesLine(translated('Data read'), progress.bytesDone, null));
+      case SyncPhase.comparing:
+        lines.add(
+          ratioLine(
+            translated('Files processed'),
+            progress.filesDone,
+            progress.fileCount,
+          ),
+        );
+        lines.add(
+          bytesLine(
+            translated('Data to transfer'),
+            progress.bytesDone,
+            progress.totalBytes,
+          ),
+        );
+      case SyncPhase.transferring:
+        lines.add(
+          ratioLine(
+            translated('Files processed'),
+            progress.filesDone,
+            progress.fileCount,
+          ),
+        );
+        lines.add(
+          bytesLine(
+            translated('Data transferred'),
+            progress.bytesDone,
+            progress.totalBytes,
+          ),
+        );
+      case SyncPhase.verifying:
+        if (progress.fileCount == null) {
+          lines.add(countLine(translated('Files scanned'), progress.filesDone));
+          lines.add(
+            bytesLine(translated('Data read'), progress.bytesDone, null),
+          );
+        } else {
+          lines.add(
+            ratioLine(
+              translated('Files verified'),
+              progress.filesDone,
+              progress.fileCount,
+            ),
+          );
+        }
+      case SyncPhase.complete:
+        lines.add(countLine(translated('Files verified'), progress.filesDone));
+        if (progress.totalBytes != null || progress.bytesDone > 0) {
+          lines.add(
+            bytesLine(
+              translated('Data transferred'),
+              progress.bytesDone,
+              progress.totalBytes,
+            ),
+          );
+        }
+      case SyncPhase.recovering:
+      case SyncPhase.saving:
+      case SyncPhase.idle:
+      case SyncPhase.cancelled:
+      case SyncPhase.failed:
+        if (progress.fileCount == null && progress.filesDone > 0) {
+          lines.add(countLine(translated('Files scanned'), progress.filesDone));
+          lines.add(
+            bytesLine(translated('Data read'), progress.bytesDone, null),
+          );
+        } else if (progress.fileCount != null) {
+          lines.add(
+            ratioLine(
+              translated('Files processed'),
+              progress.filesDone,
+              progress.fileCount,
+            ),
+          );
+        }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: lines.map((line) => Text(line)).toList(growable: false),
+    );
+  }
 }
 
 final class _SettingsPage extends StatefulWidget {
@@ -662,11 +714,12 @@ final class _SettingsPageState extends State<_SettingsPage> {
   late String _language;
   bool _busy = false;
   bool _passwordVisible = false;
-  bool _revealedSavedPassword = false;
-  bool _editedRevealedPassword = false;
+  bool _loadedSavedPassword = false;
+  bool _editedLoadedPassword = false;
   String? _savedCredentialAccount;
   String? _inputAccountKey;
   int _passwordRevealRequest = 0;
+  int _passwordInputRevision = 0;
   CancellationToken? _testCancellation;
   String? _message;
 
@@ -705,17 +758,38 @@ final class _SettingsPageState extends State<_SettingsPage> {
   }
 
   Future<void> _refreshPasswordStatus(SyncSettings settings) async {
+    final account = _accountKey(settings);
+    final request = ++_passwordRevealRequest;
+    final passwordRevision = _passwordInputRevision;
     try {
       final saved = await widget.platform.hasSavedCredential(settings);
-      if (mounted &&
-          widget.config.value.settings?.syncIdentity == settings.syncIdentity) {
-        setState(
-          () => _savedCredentialAccount = saved ? _accountKey(settings) : null,
-        );
-      }
+      final secret = saved ? await widget.platform.read(settings) : null;
+      if (!_isCurrentCredentialRequest(account, request)) return;
+      setState(() {
+        _savedCredentialAccount = saved ? account : null;
+        if (saved &&
+            secret != null &&
+            passwordRevision == _passwordInputRevision &&
+            _password.text.isEmpty) {
+          _password.text = secret;
+          _loadedSavedPassword = true;
+          _editedLoadedPassword = false;
+        }
+      });
     } catch (error) {
-      if (mounted) setState(() => _message = error.toString());
+      if (_isCurrentCredentialRequest(account, request)) {
+        setState(() => _message = error.toString());
+      }
     }
+  }
+
+  bool _isCurrentCredentialRequest(String account, int request) {
+    final current = widget.config.value.settings;
+    return mounted &&
+        request == _passwordRevealRequest &&
+        _inputAccountKey == account &&
+        current != null &&
+        _accountKey(current) == account;
   }
 
   bool _sameSavedAccount(SyncSettings settings) {
@@ -811,11 +885,8 @@ final class _SettingsPageState extends State<_SettingsPage> {
   Future<void> _togglePassword() async {
     if (_busy) return;
     if (_passwordVisible) {
-      if (_revealedSavedPassword && !_editedRevealedPassword) _password.clear();
       setState(() {
         _passwordVisible = false;
-        _revealedSavedPassword = false;
-        _editedRevealedPassword = false;
       });
       return;
     }
@@ -829,6 +900,7 @@ final class _SettingsPageState extends State<_SettingsPage> {
       }
       final account = _accountKey(candidate);
       final request = ++_passwordRevealRequest;
+      final passwordRevision = _passwordInputRevision;
       try {
         final value = await _secretFor(candidate);
         if (!mounted || request != _passwordRevealRequest) return;
@@ -839,9 +911,12 @@ final class _SettingsPageState extends State<_SettingsPage> {
           return;
         }
         if (currentAccount != account) return;
-        _password.text = value;
-        _revealedSavedPassword = true;
-        _editedRevealedPassword = false;
+        if (_passwordInputRevision == passwordRevision &&
+            _password.text.isEmpty) {
+          _password.text = value;
+          _loadedSavedPassword = true;
+          _editedLoadedPassword = false;
+        }
       } catch (error) {
         if (mounted) setState(() => _message = error.toString());
         return;
@@ -878,9 +953,9 @@ final class _SettingsPageState extends State<_SettingsPage> {
         nextAccount != null &&
         _accountKey(current) == nextAccount;
     if (!sameAccount) {
-      if (_revealedSavedPassword && !_editedRevealedPassword) _password.clear();
-      _revealedSavedPassword = false;
-      _editedRevealedPassword = false;
+      if (_loadedSavedPassword && !_editedLoadedPassword) _password.clear();
+      _loadedSavedPassword = false;
+      _editedLoadedPassword = false;
     } else {
       unawaited(_refreshPasswordStatus(current));
     }
@@ -975,10 +1050,10 @@ final class _SettingsPageState extends State<_SettingsPage> {
         language: _language,
         settings: candidate,
       );
-      _password.clear();
+      if (secret.isNotEmpty) _password.text = secret;
       _passwordVisible = false;
-      _revealedSavedPassword = false;
-      _editedRevealedPassword = false;
+      _loadedSavedPassword = secret.isNotEmpty;
+      _editedLoadedPassword = false;
       _savedCredentialAccount = secret.isNotEmpty
           ? _accountKey(candidate)
           : null;
@@ -1019,9 +1094,8 @@ final class _SettingsPageState extends State<_SettingsPage> {
         keyboardType: TextInputType.url,
         decoration: InputDecoration(
           labelText: SyncTuneStrings.of(context).text('WebDAV URL'),
-          helperText: SyncTuneStrings.of(context).text(
-            'Enter the complete HTTPS URL, including the remote music directory.',
-          ),
+          helperText: SyncTuneStrings.of(context)
+              .text('Include the remote music folder in the HTTPS URL.'),
         ),
         onChanged: (_) => _credentialFieldsChanged(),
       ),
@@ -1046,18 +1120,19 @@ final class _SettingsPageState extends State<_SettingsPage> {
             !widget.controller.configurationWriteInProgress,
         obscureText: !_passwordVisible,
         onChanged: (_) {
-          if (_revealedSavedPassword) _editedRevealedPassword = true;
+          _passwordInputRevision++;
+          if (_loadedSavedPassword) _editedLoadedPassword = true;
           setState(() {});
         },
         decoration: InputDecoration(
           labelText: SyncTuneStrings.of(context).text('Password'),
-          helperText: SyncTuneStrings.of(context).text(
-            _password.text.isNotEmpty
-                ? 'This password will be saved in the system credential store.'
-                : _savedCredentialUsable
-                ? 'A password is saved for this account. Leave blank to keep it.'
-                : 'Enter the WebDAV password.',
-          ),
+          helperText: _loadedSavedPassword
+              ? SyncTuneStrings.of(context)
+                    .text('Stored in system credentials.')
+              : _password.text.isEmpty && _savedCredentialUsable
+              ? SyncTuneStrings.of(context)
+                    .text('Leave blank to keep saved password.')
+              : null,
           suffixIcon: IconButton(
             tooltip: SyncTuneStrings.of(
               context,
@@ -1112,12 +1187,6 @@ final class _SettingsPageState extends State<_SettingsPage> {
                 if (value != null) setState(() => _language = value);
               },
       ),
-      if (widget.controller.isRunning) ...<Widget>[
-        const SizedBox(height: 12),
-        const LocalizedText(
-          'Settings cannot change while synchronization is running.',
-        ),
-      ],
       const SizedBox(height: 20),
       FilledButton.icon(
         onPressed: _busy || widget.controller.isRunning ? null : _save,
@@ -1132,8 +1201,6 @@ final class _SettingsPageState extends State<_SettingsPage> {
     ],
   );
 }
-
-String _remoteLabel(SyncSettings settings) => _effectiveRemoteUrl(settings);
 
 String _effectiveRemoteUrl(SyncSettings settings) =>
     settings.effectiveRemoteUrl;

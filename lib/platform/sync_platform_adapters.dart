@@ -178,9 +178,9 @@ final class SyncPlatformAdapters
       'phase': progress.phase.name,
       'currentFile': progress.currentFile,
       'filesDone': progress.filesDone,
-      'fileCount': progress.fileCount,
+      'fileCount': progress.fileCount ?? 0,
       'bytesDone': progress.bytesDone,
-      'totalBytes': progress.totalBytes,
+      'totalBytes': progress.totalBytes ?? 0,
     });
   }
 

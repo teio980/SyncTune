@@ -161,8 +161,12 @@ final class WebDavClient {
       token.throwIfCancelled();
       final code = response.statusCode ?? 0;
       if (code == 412) {
+        final relative = _relativeSegments(_rootUri(settings), uri);
         throw SyncFailure(
-          'The WebDAV file changed during synchronization (HTTP 412). Start a new scan.',
+          'The WebDAV server rejected the $method precondition (HTTP 412). Start a new scan.',
+          path: relative == null || relative.isEmpty
+              ? null
+              : SyncPath.parse(relative.join('/')),
           statusCode: 412,
           conditionalWriteRejected: conditionalMutation,
         );
@@ -787,12 +791,9 @@ final class WebDavClient {
         path: path,
       );
     }
-    final headers = <String, String>{};
+    final headers = _mutationCondition(settings, path, conditionEtag);
     if (metadata == null) {
       headers[HttpHeaders.ifNoneMatchHeader] = '*';
-    } else if (conditionEtag != null &&
-        RegExp(r'^"[\x21\x23-\x7e\x80-\xff]*"$').hasMatch(conditionEtag)) {
-      headers[HttpHeaders.ifMatchHeader] = conditionEtag;
     }
     final tracked = onBytes == null
         ? staged
@@ -842,7 +843,6 @@ final class WebDavClient {
       backupPath,
       token,
     );
-    final headers = <String, String>{};
     final etag = metadata.etag;
     if (!_isStrongEtag(etag)) {
       final checked = await _downloadToFile(
@@ -864,16 +864,12 @@ final class WebDavClient {
         if (await checked.file.exists()) await checked.file.delete();
       }
     }
-    if (etag != null &&
-        RegExp(r'^"[\x21\x23-\x7e\x80-\xff]*"$').hasMatch(etag)) {
-      headers[HttpHeaders.ifMatchHeader] = etag;
-    }
     final response = await _request<List<int>>(
       settings,
       'DELETE',
       _uri(settings, path),
       token,
-      headers: headers,
+      headers: _mutationCondition(settings, path, etag),
       conditionalMutation: true,
     );
     _requireSuccess(response.statusCode, 'Delete WebDAV file');
@@ -883,6 +879,23 @@ final class WebDavClient {
         path: path,
       );
     }
+  }
+
+  Map<String, String> _mutationCondition(
+    SyncSettings settings,
+    SyncPath path,
+    String? etag,
+  ) {
+    if (!_isStrongEtag(etag)) return <String, String>{};
+    // RFC 4918 section 10.4: use the DAV resource's own ETag condition for
+    // mutations. Some DAV servers reject HTTP If-Match on PUT/DELETE even
+    // though the tag still matches. Tag the URI to scope this to the file,
+    // rather than its parent, and keep intermediaries from caching it.
+    return <String, String>{
+      'If': '<${_uri(settings, path)}> ([$etag])',
+      HttpHeaders.cacheControlHeader: 'no-cache',
+      HttpHeaders.pragmaHeader: 'no-cache',
+    };
   }
 
   Future<bool> _preserveRemote(
