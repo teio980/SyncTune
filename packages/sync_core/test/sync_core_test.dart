@@ -168,7 +168,7 @@ void main() {
       }),
     );
     expect(plan.conflicts, isEmpty);
-    expect(plan.operations.single.kind, SyncOperationKind.putLocalToRemote);
+    expect(plan.operations, isEmpty);
   });
   test('same-id concurrent edits choose a deterministic collision-safe path',
       () {

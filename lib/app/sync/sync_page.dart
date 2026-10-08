@@ -29,8 +29,6 @@ class SyncPage extends ConsumerWidget {
         controls?.snapshot ??
         const ForegroundRuntimeSnapshot.idle();
 
-    final hasCompleteScan =
-        scan.status == MusicScanStatus.ready && scan.complete;
     final isPartialScan =
         scan.status == MusicScanStatus.ready && !scan.complete;
     final isScanLoading = scan.status == MusicScanStatus.loading;
@@ -113,7 +111,7 @@ class SyncPage extends ConsumerWidget {
                     ? controls.cancel
                     : canRetry
                     ? () {
-                        if (isScanIdle && grant != null) {
+                        if (isScanIdle) {
                           unawaited(
                             ref.read(musicScanProvider.notifier).scan(grant),
                           );
@@ -122,7 +120,7 @@ class SyncPage extends ConsumerWidget {
                       }
                     : canRun
                     ? () {
-                        if (isScanIdle && grant != null) {
+                        if (isScanIdle) {
                           unawaited(
                             ref.read(musicScanProvider.notifier).scan(grant),
                           );
@@ -223,14 +221,12 @@ class SyncPage extends ConsumerWidget {
         message: 'Rescan on Music to confirm folder access.',
         icon: Icons.error_outline,
         tone: SyncTuneStatusTone.error,
-        action: grant == null
-            ? null
-            : OutlinedButton.icon(
-                onPressed: () =>
-                    ref.read(musicScanProvider.notifier).scan(grant),
-                icon: const Icon(Icons.search),
-                label: const LocalizedText('Scan music'),
-              ),
+        action: OutlinedButton.icon(
+          onPressed: () =>
+              ref.read(musicScanProvider.notifier).scan(grant),
+          icon: const Icon(Icons.search),
+          label: const LocalizedText('Scan music'),
+        ),
       );
     }
     if (isPartialScan) {
@@ -239,14 +235,12 @@ class SyncPage extends ConsumerWidget {
         message: 'Partial scans cannot schedule deletions. Run a full scan.',
         icon: Icons.warning_amber,
         tone: SyncTuneStatusTone.warning,
-        action: grant == null
-            ? null
-            : OutlinedButton.icon(
-                onPressed: () =>
-                    ref.read(musicScanProvider.notifier).scan(grant),
-                icon: const Icon(Icons.search),
-                label: const LocalizedText('Scan music'),
-              ),
+        action: OutlinedButton.icon(
+          onPressed: () =>
+              ref.read(musicScanProvider.notifier).scan(grant),
+          icon: const Icon(Icons.search),
+          label: const LocalizedText('Scan music'),
+        ),
       );
     }
     if (runtimeSnapshot.phase == ForegroundRunPhase.failed ||
@@ -292,14 +286,12 @@ class SyncPage extends ConsumerWidget {
         message:
             'Sync will scan local music automatically, or you can scan first.',
         icon: Icons.sync,
-        action: grant == null
-            ? null
-            : OutlinedButton.icon(
-                onPressed: () =>
-                    ref.read(musicScanProvider.notifier).scan(grant),
-                icon: const Icon(Icons.search),
-                label: const LocalizedText('Scan music'),
-              ),
+        action: OutlinedButton.icon(
+          onPressed: () =>
+              ref.read(musicScanProvider.notifier).scan(grant),
+          icon: const Icon(Icons.search),
+          label: const LocalizedText('Scan music'),
+        ),
       );
     }
     return SyncTuneStatusCard(

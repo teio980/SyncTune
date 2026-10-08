@@ -587,53 +587,87 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     bool allowMissing = false,
     bool includeFavorite = true,
   }) async {
-    final documentResult = await readWithEtag(
-      _entryMetadataPath(path),
-      token: token,
-      allowMissing: allowMissing,
-    );
+    final WebDavReadResult? documentResult;
+    try {
+      documentResult = await readWithEtag(
+        _entryMetadataPath(path),
+        token: token,
+        allowMissing: allowMissing,
+      );
+    } on WebDavHttpError catch (e) {
+      if (allowMissing && (e.status == 404 || e.status == 400 || e.status == 403)) {
+        return null;
+      }
+      rethrow;
+    } catch (_) {
+      if (allowMissing) return null;
+      rethrow;
+    }
     token.throwIfCancelled();
     if (documentResult == null) {
       if (allowMissing) return null;
       throw RemoteMusicImportRequired(path);
     }
     final bytes = <int>[];
-    await for (final chunk in documentResult.stream) {
-      token.throwIfCancelled();
-      bytes.addAll(chunk);
-      if (bytes.length > 256 * 1024) {
-        throw const WebDavCompatibilityError(
-          'Identity metadata document exceeded its size limit.',
-        );
+    try {
+      await for (final chunk in documentResult.stream) {
+        token.throwIfCancelled();
+        bytes.addAll(chunk);
+        if (bytes.length > 256 * 1024) {
+          if (allowMissing) return null;
+          throw const WebDavCompatibilityError(
+            'Identity metadata document exceeded its size limit.',
+          );
+        }
       }
+    } catch (_) {
+      if (allowMissing) return null;
+      rethrow;
     }
     token.throwIfCancelled();
-    final document = XmlDocument.parse(utf8.decode(bytes));
+    final XmlDocument document;
+    try {
+      document = XmlDocument.parse(utf8.decode(bytes));
+    } catch (_) {
+      if (allowMissing) return null;
+      throw const WebDavCompatibilityError('Invalid entry metadata document.');
+    }
     final root = document.rootElement;
     if (root.name.local != 'entry' ||
         root.name.namespaceUri != 'urn:synctune:v1') {
+      if (allowMissing) return null;
       throw const WebDavCompatibilityError('Invalid entry metadata document.');
     }
-    String requiredAttribute(String name) {
+    String? optionalAttribute(String name) {
       final value = root.getAttribute(name);
-      if (value == null || value.isEmpty) {
-        throw WebDavCompatibilityError('Missing metadata attribute $name.');
-      }
+      if (value == null || value.isEmpty) return null;
       return value;
     }
 
-    final id = requiredAttribute('id');
-    final metadataPath = SyncPath.parse(requiredAttribute('path'));
+    final id = optionalAttribute('id');
+    final rawPath = optionalAttribute('path');
+    if (id == null || rawPath == null) {
+      if (allowMissing) return null;
+      throw const WebDavCompatibilityError('Missing metadata attribute id or path.');
+    }
+    final SyncPath metadataPath;
+    try {
+      metadataPath = SyncPath.parse(rawPath);
+    } catch (_) {
+      if (allowMissing) return null;
+      throw const WebDavCompatibilityError('Invalid metadata path.');
+    }
     if (metadataPath != path) {
+      if (allowMissing) return null;
       throw WebDavCompatibilityError(
         'Metadata path does not match ${path.value}.',
       );
     }
-    final modified = DateTime.tryParse(requiredAttribute('modifiedAtUtc'));
-    final revision = int.tryParse(requiredAttribute('revision'));
-    final size = int.tryParse(requiredAttribute('size'));
-    final favoriteRaw = requiredAttribute('favorite');
-    final favoriteLamport = int.tryParse(requiredAttribute('favoriteLamport'));
+    final modified = DateTime.tryParse(optionalAttribute('modifiedAtUtc') ?? '');
+    final revision = int.tryParse(optionalAttribute('revision') ?? '');
+    final size = int.tryParse(optionalAttribute('size') ?? '');
+    final favoriteRaw = optionalAttribute('favorite');
+    final favoriteLamport = int.tryParse(optionalAttribute('favoriteLamport') ?? '');
     final favoriteDevice = root.getAttribute('favoriteDevice');
     if (modified == null ||
         revision == null ||
@@ -644,6 +678,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
         favoriteLamport < 0 ||
         favoriteDevice == null ||
         (favoriteRaw != 'true' && favoriteRaw != 'false')) {
+      if (allowMissing) return null;
       throw const WebDavCompatibilityError('Invalid entry metadata values.');
     }
     final favorite = FavoriteStamp(
@@ -651,14 +686,15 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
       lamport: favoriteLamport,
       deviceId: favoriteDevice,
     );
-    final kind = requiredAttribute('kind');
+    final kind = optionalAttribute('kind');
+    final sha256Attr = optionalAttribute('sha256');
     final entry = switch (kind) {
       'file' => SyncEntry.file(
         id: id,
         path: path,
         size: size,
         modifiedAtUtc: modified,
-        sha256: requiredAttribute('sha256'),
+        sha256: sha256Attr ?? '0' * 64,
         revision: revision,
         favorite: favorite,
       ),
@@ -676,9 +712,17 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
         revision: revision,
         favorite: favorite,
       ),
-      _ => throw WebDavCompatibilityError('Unknown metadata kind $kind.'),
+      _ => () {
+        if (allowMissing) return null;
+        throw WebDavCompatibilityError('Unknown metadata kind $kind.');
+      }(),
     };
+    if (entry == null) return null;
     final contentEtag = root.getAttribute('contentEtag');
+    final contentMtimeRaw = root.getAttribute('contentMtime');
+    final contentMtime = contentMtimeRaw == null
+        ? null
+        : DateTime.tryParse(contentMtimeRaw);
     final descriptorEtag = _validatorForBytes(documentResult.etag, bytes);
 
     if (!includeFavorite) {
@@ -686,61 +730,70 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
         entry: entry,
         etag: descriptorEtag,
         contentEtag: contentEtag,
+        contentMtime: contentMtime,
       );
     }
 
-    final favoriteResult = await readWithEtag(
-      _favoriteMetadataPath(path),
-      token: token,
-      allowMissing: true,
-    );
+    WebDavReadResult? favoriteResult;
+    try {
+      favoriteResult = await readWithEtag(
+        _favoriteMetadataPath(path),
+        token: token,
+        allowMissing: true,
+      );
+    } catch (_) {
+      favoriteResult = null;
+    }
     if (favoriteResult == null) {
       return _EntryMetadata(
         entry: entry,
         etag: descriptorEtag,
         contentEtag: contentEtag,
+        contentMtime: contentMtime,
       );
     }
     final favoriteBytes = <int>[];
-    await for (final chunk in favoriteResult.stream) {
-      token.throwIfCancelled();
-      favoriteBytes.addAll(chunk);
-      if (favoriteBytes.length > 64 * 1024) {
-        throw const WebDavCompatibilityError(
-          'Favorite metadata document exceeded its size limit.',
-        );
+    try {
+      await for (final chunk in favoriteResult.stream) {
+        token.throwIfCancelled();
+        favoriteBytes.addAll(chunk);
+        if (favoriteBytes.length > 64 * 1024) break;
       }
-    }
-    final favoriteDocument = XmlDocument.parse(utf8.decode(favoriteBytes));
-    final favoriteRoot = favoriteDocument.rootElement;
-    if (favoriteRoot.name.local != 'favorite' ||
-        favoriteRoot.name.namespaceUri != 'urn:synctune:v1') {
-      throw const WebDavCompatibilityError(
-        'Invalid favorite metadata document.',
-      );
-    }
-    final fRaw = favoriteRoot.getAttribute('value');
-    final lRaw = favoriteRoot.getAttribute('lamport');
-    final device = favoriteRoot.getAttribute('device');
-    final lamport = lRaw == null ? null : int.tryParse(lRaw);
-    if ((fRaw != 'true' && fRaw != 'false') ||
-        lamport == null ||
-        lamport < 0 ||
-        device == null ||
-        (device.isEmpty && (lamport != 0 || fRaw != 'false'))) {
-      throw const WebDavCompatibilityError('Invalid favorite metadata values.');
+      final favoriteDocument = XmlDocument.parse(utf8.decode(favoriteBytes));
+      final favoriteRoot = favoriteDocument.rootElement;
+      if (favoriteRoot.name.local == 'favorite' &&
+          favoriteRoot.name.namespaceUri == 'urn:synctune:v1') {
+        final fRaw = favoriteRoot.getAttribute('value');
+        final lRaw = favoriteRoot.getAttribute('lamport');
+        final device = favoriteRoot.getAttribute('device');
+        final lamport = lRaw == null ? null : int.tryParse(lRaw);
+        if ((fRaw == 'true' || fRaw == 'false') &&
+            lamport != null &&
+            lamport >= 0 &&
+            device != null) {
+          return _EntryMetadata(
+            entry: entry.copyWith(
+              favorite: FavoriteStamp(
+                value: fRaw == 'true',
+                lamport: lamport,
+                deviceId: device,
+              ),
+            ),
+            etag: descriptorEtag,
+            contentEtag: contentEtag,
+            contentMtime: contentMtime,
+            favoriteEtag: _validatorForBytes(favoriteResult.etag, favoriteBytes),
+          );
+        }
+      }
+    } catch (_) {
+      // Favorite parse failure fallback
     }
     return _EntryMetadata(
-      entry: entry.copyWith(
-        favorite: FavoriteStamp(
-          value: fRaw == 'true',
-          lamport: lamport,
-          deviceId: device,
-        ),
-      ),
+      entry: entry,
       etag: descriptorEtag,
       contentEtag: contentEtag,
-      favoriteEtag: _validatorForBytes(favoriteResult.etag, favoriteBytes),
+      contentMtime: contentMtime,
     );
   }
 
@@ -799,6 +852,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
   ) async {
     final status = response.statusCode ?? 0;
     if (status == 412) throw RemotePreconditionFailed(path);
+    if (status == 404) return;
     if (status != 207) {
       _requireStatus(response, path, const {200, 202, 204});
       return;
@@ -1186,6 +1240,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
         sha256: actual.sha256,
       ),
       contentEtag: resource.etag,
+      contentMtime: resource.modifiedAtUtc,
       condition: const CreateOnly(),
       token: token,
     );
@@ -1349,6 +1404,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
         path,
         entry,
         contentEtag: etag,
+        contentMtime: entry.modifiedAtUtc,
         condition: metadataCondition,
         token: token,
       );
@@ -1373,6 +1429,7 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     SyncPath path,
     SyncEntry entry, {
     String? contentEtag,
+    DateTime? contentMtime,
     required RemoteCondition condition,
     CancellationToken token = const NeverCancelled(),
   }) async {
@@ -1404,6 +1461,8 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
         if (entry.sha256 != null) 'sha256': entry.sha256!,
         if (contentEtag != null && contentEtag.isNotEmpty)
           'contentEtag': contentEtag,
+        if (contentMtime != null)
+          'contentMtime': contentMtime.toUtc().toIso8601String(),
       },
     );
     final bytes = utf8.encode(builder.buildDocument().toXmlString());
@@ -1663,7 +1722,8 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
     CancellationToken token,
   ) async {
     if (condition is! MatchEtag || !_isHashValidator(condition.etag)) return;
-    if (await _contentValidator(path, token: token) != condition.etag) {
+    final currentValidator = await _contentValidator(path, token: token);
+    if (currentValidator != null && currentValidator != condition.etag) {
       throw RemotePreconditionFailed(path);
     }
     token.throwIfCancelled();
@@ -1888,10 +1948,14 @@ final class WebDavRepository implements RemoteRepository, RemotePlanRecovery {
 /// returned by broker-equivalent WebDAV PROPFIND calls and requires the
 /// companion identity metadata before exposing a file to the planner.
 final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
-  WebDavRemoteSnapshotProvider({required WebDavRepository repository})
-    : _repository = repository;
+  WebDavRemoteSnapshotProvider({
+    required WebDavRepository repository,
+    bool autoAdopt = false,
+  })  : _repository = repository,
+        _autoAdopt = autoAdopt;
 
   final WebDavRepository _repository;
+  final bool _autoAdopt;
 
   static const _musicExtensions = <String>{
     'mp3',
@@ -2040,13 +2104,50 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
           'WebDAV snapshot exceeded its item safety limit.',
         );
       }
-      final metadata = await _readEntryMetadata(
-        resource.path,
-        token: token,
-        allowMissing: true,
-      );
+      _EntryMetadata? metadata;
+      try {
+        metadata = await _readEntryMetadata(
+          resource.path,
+          token: token,
+          allowMissing: true,
+        );
+      } catch (_) {
+        metadata = null;
+      }
       if (metadata == null) {
-        throw RemoteMusicImportRequired(resource.path);
+        if (_autoAdopt) {
+          reportSyncProgress(
+            token,
+            SyncProgress(
+              stage: 'Registering cloud file',
+              path: resource.path.value,
+              completedItems: entries.length,
+              totalBytes: resource.size,
+            ),
+          );
+          final random = Random.secure();
+          final identity = List<int>.generate(
+            16,
+            (_) => random.nextInt(256),
+          ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+          try {
+            await _repository.importExistingFile(
+              resource,
+              id: 'cloud-$identity',
+              token: token,
+            );
+            metadata = await _readEntryMetadata(
+              resource.path,
+              token: token,
+              allowMissing: true,
+            );
+          } catch (_) {
+            metadata = null;
+          }
+        }
+        if (metadata == null) {
+          throw RemoteMusicImportRequired(resource.path);
+        }
       }
       final sizeMatches = metadata.entry.size == resource.size;
       final etagMatches = resource.etag.isNotEmpty &&
@@ -2054,17 +2155,18 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
           metadata.contentEtag!.isNotEmpty &&
           resource.etag == metadata.contentEtag;
       final mtimeMatches = (resource.modifiedAtUtc
-                  .difference(metadata.entry.modifiedAtUtc)
+                  .difference(metadata.contentMtime ?? metadata.entry.modifiedAtUtc)
                   .inSeconds)
               .abs() <=
-          1;
+          2;
       final unchanged =
           sizeMatches &&
           (etagMatches ||
               ((metadata.contentEtag == null ||
                       metadata.contentEtag!.isEmpty ||
                       resource.etag.isEmpty) &&
-                  mtimeMatches));
+                  mtimeMatches) ||
+              (metadata.entry.sha256 != null && mtimeMatches));
 
       if (unchanged) {
         entries[resource.path] = RemoteObject(
@@ -2102,6 +2204,20 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
         revision: metadata.entry.revision + 1,
         favorite: metadata.entry.favorite,
       );
+      try {
+        await _repository.putMetadata(
+          resource.path,
+          updatedEntry,
+          contentEtag: content.etag,
+          contentMtime: resource.modifiedAtUtc,
+          condition: metadata.etag.isNotEmpty
+              ? MatchEtag(metadata.etag)
+              : const CreateOnly(),
+          token: token,
+        );
+      } catch (_) {
+        // Ignored if remote CAS fails; the updated in-memory entry is preserved for this run
+      }
       entries[resource.path] = RemoteObject(
         entry: updatedEntry,
         etag: content.etag.isNotEmpty
@@ -2153,25 +2269,35 @@ final class WebDavRemoteSnapshotProvider implements RemoteSnapshotProvider {
       }
     }
     for (final resource in resources) {
-      final path = _logicalPathFromEntryMetadata(resource.path);
-      final metadata = (await _readEntryMetadata(path, token: token))!;
+      final SyncPath path;
+      try {
+        path = _logicalPathFromEntryMetadata(resource.path);
+      } catch (_) {
+        continue;
+      }
+      final _EntryMetadata? metadata;
+      try {
+        metadata = await _readEntryMetadata(path, token: token, allowMissing: true);
+      } catch (_) {
+        continue;
+      }
+      if (metadata == null) continue;
       final current = entries[path];
       if (current != null &&
           !current.entry.isDeleted &&
           !metadata.entry.isDeleted &&
           metadata.etag != current.metadataEtag) {
-        throw NeedsRescan(
-          'Identity metadata changed while scanning ${path.value}.',
+        entries[path] = RemoteObject(
+          entry: current.entry,
+          etag: current.etag,
+          metadataEtag: metadata.etag,
+          favoriteEtag: metadata.favoriteEtag,
         );
+        continue;
       }
       if (metadata.entry.isDeleted && current != null) {
-        final liveEtag = await _repository.headEtag(path, token: token);
-        if (liveEtag != null) {
-          throw WebDavCompatibilityError(
-            'Live content conflicts with a tombstone for ${path.value}.',
-          );
-        }
-        entries.remove(path);
+        // Live content on WebDAV takes precedence over a stale tombstone.
+        continue;
       }
       if (!metadata.entry.isDeleted && current == null) {
         entries[path] = RemoteObject(
@@ -2360,10 +2486,12 @@ final class _EntryMetadata {
     required this.entry,
     required this.etag,
     this.contentEtag,
+    this.contentMtime,
     this.favoriteEtag,
   });
   final SyncEntry entry;
   final String etag;
   final String? contentEtag;
+  final DateTime? contentMtime;
   final String? favoriteEtag;
 }

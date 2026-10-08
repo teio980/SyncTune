@@ -82,8 +82,8 @@ final class PlatformSyncNotificationPort implements SyncNotificationPort {
         <String, Object?>{
           'title': translate(title),
           'message': translate(message),
-          if (progress != null) 'progress': progress,
-          if (max != null) 'max': max,
+          'progress': ?progress,
+          'max': ?max,
           'indeterminate': indeterminate,
         },
       );

@@ -1402,8 +1402,10 @@ final class _ConfiguredRemoteSnapshotProvider
   }) async {
     final lease = await client._lease(token: token);
     try {
-      return await WebDavRemoteSnapshotProvider(repository: lease.repository)
-          .capture(root, token: token);
+      return await WebDavRemoteSnapshotProvider(
+        repository: lease.repository,
+        autoAdopt: true,
+      ).capture(root, token: token);
     } finally {
       await lease.release();
     }

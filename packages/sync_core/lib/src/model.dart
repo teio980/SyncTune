@@ -195,7 +195,6 @@ final class SyncEntry {
           revision: revision ?? this.revision,
           favorite: favorite ?? this.favorite);
   bool contentEquals(SyncEntry other) =>
-      id == other.id &&
       path == other.path &&
       kind == other.kind &&
       size == other.size &&
