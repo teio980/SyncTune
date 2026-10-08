@@ -163,7 +163,78 @@ void main() {
       expect(condition, '"v1"');
     },
   );
+
+  test('connection test is a read-only PROPFIND of the complete URL', () async {
+    final existing = settings;
+    settings = SyncSettings(
+      localRoot: existing.localRoot,
+      localRootId: existing.localRootId,
+      localGeneration: existing.localGeneration,
+      serverUrl: existing.serverUrl,
+      remoteRoot: 'Music/synctune',
+      username: existing.username,
+      language: existing.language,
+    );
+    final methods = <String>[];
+    final paths = <String>[];
+    var depth = '';
+    server.listen((request) async {
+      methods.add(request.method);
+      paths.add(request.uri.path);
+      depth = request.headers.value('depth') ?? '';
+      request.response.statusCode = 207;
+      request.response.write(_folderMetadata(request.uri.path));
+      await request.response.close();
+    });
+
+    await WebDavClient().testConnection(
+      settings,
+      secret: 'saved-secret',
+      token: CancellationToken(),
+    );
+
+    expect(methods, <String>['PROPFIND']);
+    expect(paths, <String>['/dav/Music/synctune/']);
+    expect(depth, '0');
+  });
+
+  test('connection test reports redirects without following them', () async {
+    var requests = 0;
+    server.listen((request) async {
+      requests++;
+      request.response.statusCode = HttpStatus.found;
+      request.response.headers.set(HttpHeaders.locationHeader, '/other');
+      await request.response.close();
+    });
+
+    await expectLater(
+      WebDavClient().testConnection(
+        settings,
+        secret: 'secret',
+        token: CancellationToken(),
+      ),
+      throwsA(
+        isA<SyncFailure>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          302,
+        ),
+      ),
+    );
+    expect(requests, 1);
+  });
 }
+
+String _folderMetadata(String href) =>
+    '''
+<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response><d:href>$href</d:href><d:propstat>
+    <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+    <d:status>HTTP/1.1 200 OK</d:status>
+  </d:propstat></d:response>
+</d:multistatus>
+''';
 
 String _listing({required String etag, required int length}) =>
     '''

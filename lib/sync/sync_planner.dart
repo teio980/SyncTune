@@ -232,11 +232,12 @@ final class SyncPlanner {
     for (var suffix = 1; suffix < 100000; suffix++) {
       final number = suffix == 1 ? '' : ' $suffix';
       final fixedLength = marker.length + number.length + extension.length;
-      if (fixedLength >= 255)
+      if (fixedLength >= 255) {
         throw SyncFailure(
           'A safe conflict copy name cannot fit within Windows filename limits.',
           path: original,
         );
+      }
       final safeStem = _truncate(stem, (255 - fixedLength).clamp(1, 255));
       final requested = SyncPath.parse(
         '${original.parent.isEmpty ? '' : '${original.parent}/'}$safeStem$marker$number$extension',
@@ -277,8 +278,9 @@ final class SyncPlanner {
     var end = maxLength;
     if (end > 0 &&
         value.codeUnitAt(end - 1) >= 0xD800 &&
-        value.codeUnitAt(end - 1) <= 0xDBFF)
+        value.codeUnitAt(end - 1) <= 0xDBFF) {
       end--;
+    }
     return value.substring(0, end);
   }
 }

@@ -97,7 +97,7 @@ void main() {
     );
     expect(
       () => indexFiles(<SyncFile>[
-        _file('Album.mp3', 'file'),
+        _file('Album', 'file'),
         _file('Album/song.mp3', 'song'),
       ], windowsCaseSensitive: false),
       throwsA(isA<SyncFailure>()),

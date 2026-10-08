@@ -2,8 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:crypto/crypto.dart';
-
 import 'local_store.dart';
 import 'state_store.dart';
 import 'sync_model.dart';
@@ -30,14 +28,21 @@ final class SyncEngine {
   final SyncPlanner _planner = const SyncPlanner();
   bool _running = false;
 
+  Future<void> testConnection(
+    SyncSettings settings, {
+    required String secret,
+    required CancellationToken cancellation,
+  }) => webDav.testConnection(settings, secret: secret, token: cancellation);
+
   Future<void> run(
     SyncSettings settings, {
     required String secret,
     required CancellationToken cancellation,
     SyncProgressCallback? onProgress,
   }) async {
-    if (_running)
+    if (_running) {
       throw const SyncFailure('A synchronization is already running.');
+    }
     _running = true;
     var progress = const SyncProgress(phase: SyncPhase.recovering);
     var networkBytesDone = 0;
@@ -49,8 +54,9 @@ final class SyncEngine {
 
     Future<void> onNetworkBytes(SyncPath path, int bytes) async {
       networkBytesDone += bytes;
-      if (networkBytesDone > networkBytesTotal)
+      if (networkBytesDone > networkBytesTotal) {
         networkBytesTotal = networkBytesDone;
+      }
       await report(
         progress.copyWith(
           phase: SyncPhase.transferring,
@@ -64,7 +70,10 @@ final class SyncEngine {
     Directory? cache;
     Object? primaryFailure;
     try {
-      if (localStore is ConfigurableLocalStore) localStore.configure(settings);
+      final configuredStore = localStore;
+      if (configuredStore is ConfigurableLocalStore) {
+        configuredStore.configure(settings);
+      }
       await stateStore.open();
       stateStore.ensureIdentity(settings.syncIdentity);
       webDav.setSecret(secret);
@@ -341,10 +350,12 @@ final class SyncEngine {
           path: operation.path,
         );
       }
-      if (localHash == localExpected)
+      if (localHash == localExpected) {
         stateStore.markSide(operation.id, local: true);
-      if (remoteHash == remoteExpected)
+      }
+      if (remoteHash == remoteExpected) {
         stateStore.markSide(operation.id, local: false);
+      }
 
       await _continueOperation(
         settings,
@@ -469,11 +480,12 @@ final class SyncEngine {
         path: operation.path,
       );
     }
-    if (remoteBackup == null)
+    if (remoteBackup == null) {
       throw SyncFailure(
         'The recovery log has no WebDAV backup path.',
         path: operation.path,
       );
+    }
     if (_canonical(remoteBackup) !=
         _canonical(_expectedRemoteBackupPath(operation.id))) {
       throw SyncFailure(
@@ -508,11 +520,12 @@ final class SyncEngine {
         if (remoteBefore == null) {
           // It is already absent; the final metadata check confirms it again.
         } else {
-          if (previousRemote == null)
+          if (previousRemote == null) {
             throw SyncFailure(
               'The WebDAV delete target could not be verified.',
               path: operation.path,
             );
+          }
           try {
             await webDav.delete(
               settings,
@@ -607,11 +620,12 @@ final class SyncEngine {
       stateStore.markSide(operation.id, local: true);
     } else if (expected == null) {
       if (currentLocal != null) {
-        if (previousLocal == null)
+        if (previousLocal == null) {
           throw SyncFailure(
             'The local delete target changed during recovery.',
             path: operation.path,
           );
+        }
         await localStore.deleteVerified(
           operation.path,
           backupKey,
@@ -693,8 +707,9 @@ final class SyncEngine {
     SyncPath path,
     SyncFile? observed,
   ) {
-    if (observed == null || !observed.hasStrongEtag)
+    if (observed == null || !observed.hasStrongEtag) {
       return const <SyncPath, BaselineEntry>{};
+    }
     return <SyncPath, BaselineEntry>{
       path: BaselineEntry(
         path: path,
@@ -780,8 +795,9 @@ final class SyncEngine {
         );
       }
     } finally {
-      if (disposable != null && await disposable.exists())
+      if (disposable != null && await disposable.exists()) {
         await disposable.delete();
+      }
     }
   }
 
@@ -935,27 +951,6 @@ final class SyncEngine {
         .join();
     return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-4${hex.substring(13, 16)}-a${hex.substring(17, 20)}-${hex.substring(20, 32)}';
   }
-}
-
-Future<String> _hashFile(File file, CancellationToken cancellation) async {
-  final sink = _DigestSink();
-  final converter = sha256.startChunkedConversion(sink);
-  await for (final chunk in file.openRead()) {
-    cancellation.throwIfCancelled();
-    converter.add(chunk);
-  }
-  converter.close();
-  return sink.value.toString();
-}
-
-final class _DigestSink implements Sink<Digest> {
-  Digest? _value;
-  Digest get value =>
-      _value ?? (throw StateError('Hash conversion produced no digest.'));
-  @override
-  void add(Digest value) => _value = value;
-  @override
-  void close() {}
 }
 
 extension<T> on Iterable<T> {

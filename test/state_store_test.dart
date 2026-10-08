@@ -34,7 +34,7 @@ void main() {
             .toSet();
         expect(tables, <String>{'settings', 'baseline', 'pending_operations'});
       } finally {
-        database.dispose();
+        database.close();
       }
     },
   );
@@ -82,7 +82,7 @@ void main() {
     final path = '${directory.path}${Platform.pathSeparator}old.sqlite';
     final oldDatabase = sqlite3.open(path);
     oldDatabase.execute('CREATE TABLE favorites (id TEXT PRIMARY KEY)');
-    oldDatabase.dispose();
+    oldDatabase.close();
 
     final store = SqliteStateStore(path);
     await expectLater(store.open(), throwsA(isA<SyncFailure>()));

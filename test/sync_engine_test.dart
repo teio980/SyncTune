@@ -209,6 +209,7 @@ final class MemoryWebDav {
   MemoryWebDav._(this._server);
   final HttpServer _server;
   final Map<String, List<int>> _files = <String, List<int>>{};
+  final Map<String, int> _fileVersions = <String, int>{};
   final Set<String> _directories = <String>{'/dav'};
   int _revision = 0;
 
@@ -223,8 +224,10 @@ final class MemoryWebDav {
   }
 
   void set(String relative, List<int> bytes) {
-    _files['/dav/$relative'] = List<int>.of(bytes);
     _revision++;
+    final path = '/dav/$relative';
+    _files[path] = List<int>.of(bytes);
+    _fileVersions[path] = _revision;
   }
 
   List<int>? read(String relative) => _files['/dav/$relative'];
@@ -232,7 +235,7 @@ final class MemoryWebDav {
   Future<void> close() => _server.close(force: true);
 
   Future<void> _handle(HttpRequest request) async {
-    final path = _normalize(request.uri.path);
+    final path = _normalize('/${request.uri.pathSegments.join('/')}');
     final depth = request.headers.value('depth');
     if (request.method == 'MKCOL') {
       if (_directories.contains(path)) {
@@ -280,6 +283,7 @@ final class MemoryWebDav {
         );
         _files[path] = bytes;
         _revision++;
+        _fileVersions[path] = _revision;
         request.response.statusCode = HttpStatus.created;
         request.response.headers.set(HttpHeaders.etagHeader, _etag(path));
       }
@@ -290,6 +294,7 @@ final class MemoryWebDav {
         request.response.statusCode = HttpStatus.preconditionFailed;
       } else {
         _files.remove(path);
+        _fileVersions.remove(path);
         _revision++;
         request.response.statusCode = HttpStatus.noContent;
       }
@@ -324,7 +329,7 @@ final class MemoryWebDav {
     request.response.write(xml);
   }
 
-  String _etag(String path) => '"${_revision}_${path.hashCode}"';
+  String _etag(String path) => '"${_fileVersions[path]}_${path.hashCode}"';
   String _normalize(String path) =>
       path.length > 1 ? path.replaceFirst(RegExp(r'/+$'), '') : path;
   String _parent(String path) => path.substring(0, path.lastIndexOf('/'));

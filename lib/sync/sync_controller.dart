@@ -28,9 +28,38 @@ final class SyncController extends ChangeNotifier {
   bool _disposed = false;
   bool _configurationWriteInProgress = false;
 
+  bool beginExclusiveOperation() {
+    if (isRunning || _configurationWriteInProgress) return false;
+    _configurationWriteInProgress = true;
+    notifyListeners();
+    return true;
+  }
+
+  void endExclusiveOperation() => endConfigurationWrite();
+
+  Future<void> testConnection(
+    SyncSettings settings, {
+    required Future<String> Function() secret,
+    required CancellationToken cancellation,
+  }) async {
+    if (!beginExclusiveOperation()) {
+      throw const SyncFailure('Another SyncTune operation is in progress.');
+    }
+    try {
+      await engine.testConnection(
+        settings,
+        secret: await secret(),
+        cancellation: cancellation,
+      );
+    } finally {
+      endExclusiveOperation();
+    }
+  }
+
   Future<void> start(SyncSettings settings) async {
-    if (_cancellation != null)
+    if (_cancellation != null) {
       throw const SyncFailure('A synchronization is already running.');
+    }
     if (_configurationWriteInProgress) {
       throw const SyncFailure(
         'Settings are being saved. Try again when saving is complete.',
@@ -108,10 +137,7 @@ final class SyncController extends ChangeNotifier {
   bool get configurationWriteInProgress => _configurationWriteInProgress;
 
   bool beginConfigurationWrite() {
-    if (isRunning || _configurationWriteInProgress) return false;
-    _configurationWriteInProgress = true;
-    notifyListeners();
-    return true;
+    return beginExclusiveOperation();
   }
 
   void endConfigurationWrite() {

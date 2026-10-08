@@ -106,6 +106,24 @@ final class WebDavClient {
   void clearSecret() => _activeSecret = '';
   String _secret(SyncSettings _) => _activeSecret;
 
+  Future<void> testConnection(
+    SyncSettings settings, {
+    required String secret,
+    required CancellationToken token,
+  }) async {
+    setSecret(secret);
+    try {
+      final root = _rootUri(settings);
+      if (!await _metadataDirectory(settings, root, token)) {
+        throw const SyncFailure(
+          'The WebDAV URL does not identify an existing folder.',
+        );
+      }
+    } finally {
+      clearSecret();
+    }
+  }
+
   Future<Response<T>> _request<T>(
     SyncSettings settings,
     String method,
@@ -123,8 +141,9 @@ final class WebDavClient {
       () => cancel.cancel('Sync cancelled.'),
     );
     final allHeaders = _headers(settings, extra: headers);
-    if (contentLength != null)
+    if (contentLength != null) {
       allHeaders[HttpHeaders.contentLengthHeader] = '$contentLength';
+    }
     try {
       final response = await _dio.requestUri<T>(
         uri,
@@ -141,36 +160,42 @@ final class WebDavClient {
       );
       token.throwIfCancelled();
       final code = response.statusCode ?? 0;
-      if (code == 412)
+      if (code == 412) {
         throw SyncFailure(
           'The WebDAV file changed during synchronization (HTTP 412). Start a new scan.',
           statusCode: 412,
           conditionalWriteRejected: conditionalMutation,
         );
-      if (code == 401)
+      }
+      if (code == 401) {
         throw const SyncFailure(
           'The WebDAV server rejected the account (HTTP 401).',
           statusCode: 401,
         );
-      if (code == 403)
+      }
+      if (code == 403) {
         throw const SyncFailure(
           'The WebDAV account does not have permission (HTTP 403).',
           statusCode: 403,
         );
-      if (code == 507)
+      }
+      if (code == 507) {
         throw const SyncFailure(
           'The WebDAV server has insufficient storage (HTTP 507).',
           statusCode: 507,
         );
-      if (code >= 300 && code < 400)
+      }
+      if (code >= 300 && code < 400) {
         throw SyncFailure(
           'WebDAV redirects are not followed; server returned HTTP $code.',
           statusCode: code,
         );
+      }
       return response;
     } on DioException catch (error) {
-      if (token.isCancelled || error.type == DioExceptionType.cancel)
+      if (token.isCancelled || error.type == DioExceptionType.cancel) {
         throw const SyncCancelled();
+      }
       final type =
           error.type == DioExceptionType.connectionTimeout ||
               error.type == DioExceptionType.receiveTimeout ||
@@ -226,7 +251,7 @@ final class WebDavClient {
       final bytes = response.data ?? const <int>[];
       final document = XmlDocument.parse(utf8.decode(bytes));
       if (document.rootElement.name.local != 'multistatus' ||
-          document.rootElement.name.uri != 'DAV:') {
+          document.rootElement.name.namespaceUri != 'DAV:') {
         throw const SyncFailure(
           'The WebDAV server returned an invalid directory listing.',
         );
@@ -240,10 +265,11 @@ final class WebDavClient {
       )) {
         token.throwIfCancelled();
         final href = _childText(element, 'href');
-        if (href == null || href.isEmpty)
+        if (href == null || href.isEmpty) {
           throw const SyncFailure(
             'The WebDAV server returned a listing entry without a path.',
           );
+        }
         final targetUri = current.uri.resolve(href);
         _assertSameOrigin(_endpoint(settings), targetUri);
         if (targetUri.userInfo.isNotEmpty ||
@@ -254,10 +280,11 @@ final class WebDavClient {
           );
         }
         final relativeSegments = _relativeSegments(root, targetUri);
-        if (relativeSegments == null)
+        if (relativeSegments == null) {
           throw SyncFailure(
             'The WebDAV server returned a path outside the selected folder: "$href".',
           );
+        }
         final samePrefix =
             relativeSegments.length >= currentSegments.length &&
             List.generate(
@@ -272,22 +299,25 @@ final class WebDavClient {
         }
         if (relativeSegments.length == currentSegments.length) {
           final self = _parseResponse(element, pathForError: current.relative);
-          if (!self.isCollection)
+          if (!self.isCollection) {
             throw SyncFailure(
               'The WebDAV path is not a folder: "${current.relative}".',
             );
+          }
           foundCurrent = true;
           continue;
         }
         final name = relativeSegments.last;
         if (name.toLowerCase() == '.synctune' ||
-            name.toLowerCase() == '.synctune-local')
+            name.toLowerCase() == '.synctune-local') {
           continue;
+        }
         final rel = relativeSegments.join('/');
-        if (!seen.add(rel))
+        if (!seen.add(rel)) {
           throw SyncFailure(
             'The WebDAV listing contains a duplicate path "$rel".',
           );
+        }
         final entry = _parseResponse(element, pathForError: rel);
         final occupiedPath = SyncPath.parse(rel);
         occupiedPaths.add(
@@ -300,14 +330,16 @@ final class WebDavClient {
           queue.add((uri: collectionUri, relative: rel));
           continue;
         }
-        if (!musicExtensions.contains(name.split('.').last.toLowerCase()))
+        if (!musicExtensions.contains(name.split('.').last.toLowerCase())) {
           continue;
+        }
         final path = occupiedPath;
-        if (entry.length != null && entry.length! < 0)
+        if (entry.length != null && entry.length! < 0) {
           throw SyncFailure(
             'The WebDAV server returned an invalid file length.',
             path: path,
           );
+        }
         final etag = entry.etag;
         final saved = baseline[path];
         onFile?.call(path.value);
@@ -328,7 +360,11 @@ final class WebDavClient {
             token,
             etag: etag,
             expectedLength: entry.length,
-            onBytes: onBytes == null ? null : (bytes) => onBytes(path, bytes),
+            onBytes: onBytes == null
+                ? null
+                : (bytes) async {
+                    await onBytes(path, bytes);
+                  },
           );
           output.add(
             SyncFile(
@@ -340,10 +376,11 @@ final class WebDavClient {
           );
         }
       }
-      if (!foundCurrent)
+      if (!foundCurrent) {
         throw SyncFailure(
           'The WebDAV server did not confirm the current folder "${current.relative}".',
         );
+      }
     }
     output.sort((a, b) => a.path.compareTo(b.path));
     validateWindowsPathSet(output.map((file) => file.path));
@@ -352,8 +389,9 @@ final class WebDavClient {
 
   static String? _childText(XmlElement parent, String localName) {
     for (final child in parent.children.whereType<XmlElement>()) {
-      if (child.name.uri == 'DAV:' && child.name.local == localName)
+      if (child.name.namespaceUri == 'DAV:' && child.name.local == localName) {
         return child.innerText.trim();
+      }
     }
     return null;
   }
@@ -384,29 +422,32 @@ final class WebDavClient {
     int? length;
     final propstats = response.children.whereType<XmlElement>().where(
       (element) =>
-          element.name.uri == 'DAV:' && element.name.local == 'propstat',
+          element.name.namespaceUri == 'DAV:' &&
+          element.name.local == 'propstat',
     );
     for (final propstat in propstats) {
       final code = _statusCode(_childText(propstat, 'status'));
       XmlElement? prop;
       for (final child in propstat.children.whereType<XmlElement>()) {
-        if (child.name.uri == 'DAV:' && child.name.local == 'prop') {
+        if (child.name.namespaceUri == 'DAV:' && child.name.local == 'prop') {
           prop = child;
           break;
         }
       }
-      if (prop == null || code == null)
+      if (prop == null || code == null) {
         throw SyncFailure(
           'The WebDAV server returned invalid properties for "$pathForError".',
         );
+      }
       for (final property in prop.children.whereType<XmlElement>().where(
-        (element) => element.name.uri == 'DAV:',
+        (element) => element.name.namespaceUri == 'DAV:',
       )) {
         if (code < 200 || code >= 300) {
           if (code == 404 &&
               (property.name.local == 'getetag' ||
-                  property.name.local == 'getcontentlength'))
+                  property.name.local == 'getcontentlength')) {
             continue;
+          }
           throw SyncFailure(
             'The WebDAV server could not read ${property.name.local} for "$pathForError" (HTTP $code).',
             path: pathForError.isEmpty ? null : SyncPath.parse(pathForError),
@@ -418,7 +459,8 @@ final class WebDavClient {
             hasResourceType = true;
             isCollection = property.children.whereType<XmlElement>().any(
               (child) =>
-                  child.name.uri == 'DAV:' && child.name.local == 'collection',
+                  child.name.namespaceUri == 'DAV:' &&
+                  child.name.local == 'collection',
             );
             break;
           case 'getetag':
@@ -428,23 +470,26 @@ final class WebDavClient {
             final raw = property.innerText.trim();
             if (raw.isNotEmpty) {
               length = int.tryParse(raw);
-              if (length == null)
+              if (length == null) {
                 throw SyncFailure(
                   'The WebDAV server returned an invalid content length for "$pathForError".',
                 );
+              }
             }
             break;
         }
       }
     }
-    if (!hasResourceType)
+    if (!hasResourceType) {
       throw SyncFailure(
         'The WebDAV server did not confirm the resource type for "$pathForError".',
       );
-    if (length != null && length! < 0)
+    }
+    if (length != null && length < 0) {
       throw SyncFailure(
         'The WebDAV server returned an invalid content length for "$pathForError".',
       );
+    }
     return _DavEntry(isCollection: isCollection, etag: etag, length: length);
   }
 
@@ -466,8 +511,9 @@ final class WebDavClient {
           part.contains('\\') ||
           part == '.' ||
           part == '..',
-    ))
+    )) {
       return null;
+    }
     return result;
   }
 
@@ -492,8 +538,10 @@ final class WebDavClient {
     Future<void> Function(int bytes)? onBytes,
   }) async {
     final headers = <String, String>{};
-    if (etag != null && RegExp(r'^"[\x21\x23-\x7e\x80-\xff]*"$').hasMatch(etag))
+    if (etag != null &&
+        RegExp(r'^"[\x21\x23-\x7e\x80-\xff]*"$').hasMatch(etag)) {
       headers[HttpHeaders.ifMatchHeader] = etag;
+    }
     final response = await _request<ResponseBody>(
       settings,
       'GET',
@@ -522,11 +570,12 @@ final class WebDavClient {
     var length = 0;
     try {
       final body = response.data;
-      if (body == null)
+      if (body == null) {
         throw SyncFailure(
           'The WebDAV server returned no file body.',
           path: path,
         );
+      }
       await for (final chunk in body.stream) {
         token.throwIfCancelled();
         converter.add(chunk);
@@ -584,8 +633,9 @@ final class WebDavClient {
       );
     }
     final body = response.data;
-    if (body == null)
+    if (body == null) {
       throw SyncFailure('The WebDAV server returned no file body.', path: path);
+    }
     final digests = _DigestSink();
     final converter = sha256.startChunkedConversion(digests);
     var length = 0;
@@ -620,7 +670,11 @@ final class WebDavClient {
       cacheDirectory,
       token,
       etag: source.etag,
-      onBytes: onBytes == null ? null : (bytes) => onBytes(source.path, bytes),
+      onBytes: onBytes == null
+          ? null
+          : (bytes) async {
+              await onBytes(source.path, bytes);
+            },
     );
     if (read.sha256 != source.sha256) {
       await read.file.delete();
@@ -695,11 +749,12 @@ final class WebDavClient {
         backupPath,
         token,
       );
-      if (!backup)
+      if (!backup) {
         throw SyncFailure(
           'Could not preserve the previous WebDAV file.',
           path: path,
         );
+      }
       if (!_isStrongEtag(metadata.etag)) {
         final checked = await _downloadToFile(
           settings,
@@ -710,11 +765,12 @@ final class WebDavClient {
           expectedLength: metadata.length,
         );
         try {
-          if (checked.sha256 != previousHash)
+          if (checked.sha256 != previousHash) {
             throw SyncFailure(
               'The WebDAV target changed before upload; start a new scan.',
               path: path,
             );
+          }
         } finally {
           if (await checked.file.exists()) await checked.file.delete();
         }
@@ -771,11 +827,12 @@ final class WebDavClient {
     CancellationToken token,
   ) async {
     final metadata = await _metadata(settings, path, token);
-    if (metadata == null)
+    if (metadata == null) {
       throw SyncFailure(
         'The WebDAV delete target disappeared after scanning.',
         path: path,
       );
+    }
     await _preserveRemote(
       settings,
       path,
@@ -797,11 +854,12 @@ final class WebDavClient {
         expectedLength: metadata.length,
       );
       try {
-        if (checked.sha256 != expectedHash)
+        if (checked.sha256 != expectedHash) {
           throw SyncFailure(
             'The WebDAV delete target changed before deletion; start a new scan.',
             path: path,
           );
+        }
       } finally {
         if (await checked.file.exists()) await checked.file.delete();
       }
@@ -857,8 +915,9 @@ final class WebDavClient {
     if (storedExists &&
         strongNow &&
         strongBefore &&
-        metadata.etag == expectedEtag)
+        metadata.etag == expectedEtag) {
       return true;
+    }
     final copied = await _downloadToFile(
       settings,
       path,
@@ -912,26 +971,31 @@ final class WebDavClient {
       utf8.decode(response.data ?? const <int>[]),
     );
     if (document.rootElement.name.local != 'multistatus' ||
-        document.rootElement.name.uri != 'DAV:')
+        document.rootElement.name.namespaceUri != 'DAV:') {
       throw const SyncFailure('The WebDAV server returned invalid metadata.');
+    }
     final elements = document.descendants
         .whereType<XmlElement>()
         .where(
-          (item) => item.name.uri == 'DAV:' && item.name.local == 'response',
+          (item) =>
+              item.name.namespaceUri == 'DAV:' && item.name.local == 'response',
         )
         .toList();
-    if (elements.length != 1)
+    if (elements.length != 1) {
       throw const SyncFailure(
         'The WebDAV server returned ambiguous file metadata.',
       );
+    }
     final element = elements.single;
-    if (_statusCode(_childText(element, 'status')) == HttpStatus.notFound)
+    if (_statusCode(_childText(element, 'status')) == HttpStatus.notFound) {
       return null;
+    }
     final href = _childText(element, 'href');
-    if (href == null)
+    if (href == null) {
       throw const SyncFailure(
         'The WebDAV server returned metadata without a path.',
       );
+    }
     final requestUri = _uri(settings, path);
     final target = requestUri.resolve(href);
     _assertSameOrigin(_endpoint(settings), target);
@@ -952,11 +1016,12 @@ final class WebDavClient {
       );
     }
     final parsed = _parseResponse(element, pathForError: path.value);
-    if (parsed.isCollection)
+    if (parsed.isCollection) {
       throw SyncFailure(
         'A folder occupies the expected music-file path.',
         path: path,
       );
+    }
     return _RemoteMetadata(parsed.etag, parsed.length);
   }
 
@@ -982,12 +1047,13 @@ final class WebDavClient {
       final code = response.statusCode ?? 0;
       if (code == HttpStatus.methodNotAllowed || code == HttpStatus.conflict) {
         final exists = await _metadataDirectory(settings, uri, token);
-        if (!exists)
+        if (!exists) {
           throw SyncFailure(
             'Could not create a WebDAV parent folder for "${path.value}" (HTTP $code).',
             path: path,
             statusCode: code,
           );
+        }
       } else {
         _requireSuccess(code, 'Create WebDAV folder');
       }
@@ -1060,28 +1126,33 @@ final class WebDavClient {
       utf8.decode(response.data ?? const <int>[]),
     );
     if (document.rootElement.name.local != 'multistatus' ||
-        document.rootElement.name.uri != 'DAV:')
+        document.rootElement.name.namespaceUri != 'DAV:') {
       throw const SyncFailure(
         'The WebDAV server returned invalid folder metadata.',
       );
+    }
     final elements = document.descendants
         .whereType<XmlElement>()
         .where(
-          (item) => item.name.uri == 'DAV:' && item.name.local == 'response',
+          (item) =>
+              item.name.namespaceUri == 'DAV:' && item.name.local == 'response',
         )
         .toList();
-    if (elements.length != 1)
+    if (elements.length != 1) {
       throw const SyncFailure(
         'The WebDAV server returned invalid folder metadata.',
       );
+    }
     final element = elements.single;
-    if (_statusCode(_childText(element, 'status')) == HttpStatus.notFound)
+    if (_statusCode(_childText(element, 'status')) == HttpStatus.notFound) {
       return false;
+    }
     final href = _childText(element, 'href');
-    if (href == null)
+    if (href == null) {
       throw const SyncFailure(
         'The WebDAV server returned folder metadata without a path.',
       );
+    }
     final target = uri.resolve(href);
     _assertSameOrigin(_endpoint(settings), target);
     if (target.pathSegments.where((part) => part.isNotEmpty).join('/') !=
@@ -1100,8 +1171,9 @@ final class WebDavClient {
     CancellationToken token,
   ) async {
     if (expectedHash == null) {
-      if (await File(exactPath).exists())
+      if (await File(exactPath).exists()) {
         throw const SyncFailure('An unexpected WebDAV recovery file was kept.');
+      }
       return;
     }
     final expectedId = RegExp.escape(operationId);
@@ -1124,11 +1196,12 @@ final class WebDavClient {
   static void _requireSuccess(int? status, String action) {
     final code = status ?? 0;
     if (code >= 200 && code < 300) return;
-    if (code == 412)
+    if (code == 412) {
       throw const SyncFailure(
         'The WebDAV file changed during synchronization (HTTP 412). Start a new scan.',
         statusCode: 412,
       );
+    }
     throw SyncFailure('$action failed (HTTP $code).', statusCode: code);
   }
 
@@ -1190,11 +1263,4 @@ final class _DigestSink implements Sink<Digest> {
   void add(Digest value) => _value = value;
   @override
   void close() {}
-}
-
-extension<T> on Iterable<T> {
-  T? get firstOrNull {
-    final iterator = this.iterator;
-    return iterator.moveNext() ? iterator.current : null;
-  }
 }

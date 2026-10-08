@@ -19,7 +19,7 @@ final class SqliteStateStore {
     try {
       _validateUnmigratedDatabase(db);
     } catch (_) {
-      db.dispose();
+      db.close();
       rethrow;
     }
     db.execute('PRAGMA foreign_keys = ON');
@@ -115,7 +115,7 @@ final class SqliteStateStore {
   }
 
   void close() {
-    _database?.dispose();
+    _database?.close();
     _database = null;
   }
 
