@@ -5,10 +5,10 @@
 #include <flutter/flutter_view_controller.h>
 #include <flutter/method_channel.h>
 
-#include <atomic>
 #include <memory>
 
 #include "win32_window.h"
+#include "sync_platform_channel.h"
 
 // A window that does nothing but host a Flutter view.
 class FlutterWindow : public Win32Window {
@@ -31,10 +31,9 @@ class FlutterWindow : public Win32Window {
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
 
-  // A fresh token belongs to each engine/window lifetime. Async WinRT
-  // continuations must not reply after the engine or channel is destroyed.
-  std::shared_ptr<std::atomic_bool> alive_;
-  std::unique_ptr<flutter::MethodChannel<>> probe_channel_;
+  std::unique_ptr<SyncPlatformChannel> sync_platform_channel_;
+  bool close_pending_ = false;
+  bool close_allowed_ = false;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

@@ -3,7 +3,6 @@
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
-#include "probe_channel.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -26,9 +25,12 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
-  alive_ = std::make_shared<std::atomic_bool>(true);
-  probe_channel_ = RegisterProbeChannel(flutter_controller_->engine(),
-                                         GetHandle(), alive_);
+  sync_platform_channel_ = std::make_unique<SyncPlatformChannel>(
+      flutter_controller_->engine(), GetHandle(), [this]() {
+        close_allowed_ = true;
+        close_pending_ = false;
+        PostMessage(GetHandle(), WM_CLOSE, 0, 0);
+      });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -44,14 +46,10 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
-  if (alive_) {
-    alive_->store(false);
-  }
-  probe_channel_.reset();
+  sync_platform_channel_.reset();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
-  alive_.reset();
 
   Win32Window::OnDestroy();
 }
@@ -60,6 +58,17 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (message == WM_CLOSE && sync_platform_channel_) {
+    if (close_allowed_) {
+      close_allowed_ = false;
+      return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
+    }
+    if (!close_pending_) {
+      close_pending_ = true;
+      sync_platform_channel_->RequestWindowClose();
+    }
+    return 0;
+  }
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =

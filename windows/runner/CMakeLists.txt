@@ -9,7 +9,7 @@ project(runner LANGUAGES CXX)
 add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
   "main.cpp"
-  "probe_channel.cpp"
+  "sync_platform_channel.cpp"
   "utils.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
@@ -20,14 +20,6 @@ add_executable(${BINARY_NAME} WIN32
 # Apply the standard set of build settings. This can be removed for applications
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
-
-# C++/WinRT coroutine bridges use the standard C++20 coroutine mode. Keep this
-# target override local to the runner; the Flutter plugin targets retain their
-# SDK-selected language level.
-set_property(TARGET ${BINARY_NAME} PROPERTY CXX_STANDARD 20)
-set_property(TARGET ${BINARY_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
-set_property(TARGET ${BINARY_NAME} PROPERTY CXX_EXTENSIONS OFF)
-target_compile_options(${BINARY_NAME} PRIVATE /await)
 
 # Add preprocessor definitions for the build version.
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION=\"${FLUTTER_VERSION}\"")
@@ -44,8 +36,7 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "_HAS_EXCEPTIONS=1")
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
-target_link_libraries(${BINARY_NAME} PRIVATE "windowsapp.lib")
-target_link_libraries(${BINARY_NAME} PRIVATE "bcrypt.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "ole32.lib" "shell32.lib" "advapi32.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
