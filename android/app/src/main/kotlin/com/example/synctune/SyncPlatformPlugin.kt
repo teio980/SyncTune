@@ -150,6 +150,7 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
             "pickFolder" -> pickFolder(result)
             "commitFolder" -> commitFolder(call, result)
             "credentialRead" -> credentialRead(call, result)
+            "credentialExists" -> credentialExists(call, result)
             "credentialWrite" -> credentialWrite(call, result)
             "credentialDelete" -> credentialDelete(call, result)
             "foregroundStart" -> foregroundStart(result)
@@ -308,6 +309,17 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
         }
     }
 
+    private fun credentialExists(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            val identity = requiredString(call, "identity")
+            val exists = context.getSharedPreferences(CREDENTIAL_PREFS, Context.MODE_PRIVATE)
+                .contains(credentialKey(identity))
+            result.success(exists)
+        } catch (error: Exception) {
+            result.error("credential_status", error.message ?: "Could not inspect the saved password.", null)
+        }
+    }
+
     private fun credentialWrite(call: MethodCall, result: MethodChannel.Result) {
         try {
             val identity = requiredString(call, "identity")
@@ -374,6 +386,8 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
         val scope = scope(call)
         return when (call.method) {
             "safScan" -> scan(scope, requiredString(call, "requestId"), cancellation!!)
+            "safListMusic" -> listMusic(scope)
+            "safDeleteMusic" -> deleteMusic(scope, call)
             "safStat" -> {
                 val path = requiredString(call, "path")
                 val file = resolve(scope, path)
@@ -463,6 +477,59 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
             "occupiedPaths" to occupiedPaths)
     }
 
+    private fun listMusic(scope: RootScope): Map<String, Any> {
+        val tracks = ArrayList<Map<String, Any>>()
+        val pending = ArrayDeque<Pair<DocumentRef, String>>()
+        pending.add(rootDocument(scope) to "")
+        val visited = HashSet<String>()
+        while (pending.isNotEmpty()) {
+            val (directory, prefix) = pending.removeLast()
+            if (!visited.add(directory.id)) throw IllegalStateException("The document provider returned a directory cycle.")
+            for (child in children(scope, directory)) {
+                if (child.name.equals(".synctune", true) ||
+                    child.name.equals(".synctune-local", true) ||
+                    child.name.equals(".synctune-local-v2", true)) continue
+                val path = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
+                if (child.mime == DIR) {
+                    pending.add(child to path)
+                } else if (child.name.substringAfterLast('.', "").lowercase() in MUSIC_EXTENSIONS) {
+                    normalizedSegments(path)
+                    tracks.add(mapOf(
+                        "path" to path,
+                        "size" to child.size,
+                        "modifiedMs" to child.modifiedMs,
+                    ))
+                }
+            }
+        }
+        tracks.sortBy { it["path"] as String }
+        return mapOf("tracks" to tracks)
+    }
+
+    private fun deleteMusic(scope: RootScope, call: MethodCall): Map<String, Any> {
+        val path = requiredString(call, "path")
+        val parts = normalizedSegments(path)
+        val internal = parts.any { it.equals(".synctune", true) ||
+            it.equals(".synctune-local", true) ||
+            it.equals(".synctune-local-v2", true) }
+        if (internal || parts.last().substringAfterLast('.', "").lowercase() !in MUSIC_EXTENSIONS) {
+            throw IllegalArgumentException("Only music files in the selected folder can be deleted.")
+        }
+        val expectedSize = call.argument<Number>("expectedSize")?.toLong()
+            ?: throw IllegalArgumentException("Missing expectedSize.")
+        val expectedModifiedMs = call.argument<Number>("expectedModifiedMs")?.toLong()
+            ?: throw IllegalArgumentException("Missing expectedModifiedMs.")
+        val target = resolve(scope, path)
+            ?: throw IllegalStateException("The selected music file no longer exists.")
+        if (target.mime == DIR) throw IllegalStateException("The selected path is a folder.")
+        if (target.size != expectedSize || target.modifiedMs != expectedModifiedMs) {
+            throw IllegalStateException("The selected music file changed; refresh the list.")
+        }
+        deleteDocument(target)
+        if (resolve(scope, path) != null) throw IllegalStateException("The SAF provider did not confirm deletion.")
+        return mapOf("deleted" to true)
+    }
+
     private fun openRead(scope: RootScope, path: String): Map<String, Any> {
         val ref = resolve(scope, path) ?: throw IllegalStateException("File not found: $path")
         if (ref.mime == DIR) throw IllegalStateException("The selected path is a folder.")
@@ -516,6 +583,7 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
         cancelled: AtomicBoolean): Map<String, Any> {
         validateOperationId(operationId)
         val directory = internalDirectory(scope, create = true)
+            ?: throw IllegalStateException("SyncTune's recovery folder could not be created.")
         val name = "$operationId.part"
         val ref = findChild(scope, directory, name) ?: createDocument(scope, directory, name, BINARY)
         if (ref.mime == DIR) throw IllegalStateException("The stage path is a folder.")
@@ -758,6 +826,7 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
         validateOperationId(operationId)
         val name = "$operationId.backup"
         val internal = internalDirectory(scope, create = true)
+            ?: throw IllegalStateException("SyncTune's recovery folder could not be created.")
         val existing = findChild(scope, internal, name)
         if (existing != null) {
             val liveHash = hashDocument(source, cancelled).first
@@ -959,35 +1028,29 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
         throw IllegalStateException("A document disappeared.")
     }
 
-    private fun internalDirectory(scope: RootScope, create: Boolean): DocumentRef {
+    private fun internalDirectory(scope: RootScope, create: Boolean): DocumentRef? {
         val root = rootDocument(scope)
-        val id = rootKey(scope.tree) + "-" + scope.generation
-        val prefs = context.getSharedPreferences(ROOT_PREFS, Context.MODE_PRIVATE)
-        val stored = prefs.getString("internal-$id", null)
-        if (stored != null) {
-            try {
-                val cached = readDocument(DocumentsContract.buildDocumentUriUsingTree(scope.tree, stored))
-                if (cached.mime != DIR) throw IllegalStateException("The internal recovery item is not a folder.")
-                return cached
-            } catch (error: Exception) {
-                if (!create) throw error
-            }
-        }
-        var directory = findChild(scope, root, ".synctune-local-v2")
-        if (directory == null && create) directory = createDocument(scope, root, ".synctune-local-v2", DIR)
-        if (directory == null || directory.mime != DIR) throw IllegalStateException("SyncTune's recovery folder is unavailable.")
-        var sync = findChild(scope, directory, "sync")
-        if (sync == null && create) sync = createDocument(scope, directory, "sync", DIR)
-        if (sync == null || sync.mime != DIR) throw IllegalStateException("SyncTune's operation folder is unavailable.")
-        if (!prefs.edit().putString("internal-$id", sync.id).commit()) {
-            throw IllegalStateException("Could not remember SyncTune's recovery folder.")
-        }
+        val directory = optionalRecoveryFolder(
+            create = create,
+            find = { findChild(scope, root, ".synctune-local-v2") },
+            createFolder = { createDocument(scope, root, ".synctune-local-v2", DIR) },
+            isFolder = { it.mime == DIR },
+            label = "SyncTune's recovery item",
+        ) ?: return null
+        val sync = optionalRecoveryFolder(
+            create = create,
+            find = { findChild(scope, directory, "sync") },
+            createFolder = { createDocument(scope, directory, "sync", DIR) },
+            isFolder = { it.mime == DIR },
+            label = "SyncTune's operation item",
+        ) ?: return null
         return sync
     }
 
     private fun artifact(scope: RootScope, operationId: String, suffix: String): DocumentRef? {
         validateOperationId(operationId)
-        return findChild(scope, internalDirectory(scope, create = false), "$operationId$suffix")
+        val internal = internalDirectory(scope, create = false) ?: return null
+        return findChild(scope, internal, "$operationId$suffix")
     }
 
     private fun exactDocumentLength(ref: DocumentRef, cancelled: AtomicBoolean): Long {
@@ -1064,4 +1127,18 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
         private const val RESULT_STARTED = 1
         private val MUSIC_EXTENSIONS = setOf("mp3", "flac", "wav", "m4a", "aac", "ogg", "opus")
     }
+}
+
+internal fun <T : Any> optionalRecoveryFolder(
+    create: Boolean,
+    find: () -> T?,
+    createFolder: () -> T,
+    isFolder: (T) -> Boolean,
+    label: String,
+): T? {
+    var folder = find()
+    if (folder == null && create) folder = createFolder()
+    if (folder == null) return null
+    if (!isFolder(folder)) throw IllegalStateException("$label is not a folder.")
+    return folder
 }

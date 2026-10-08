@@ -82,6 +82,86 @@ final class FileLocalStore implements LocalStore {
   String _join(String base, String child) =>
       '$base${Platform.pathSeparator}${child.replaceAll('/', Platform.pathSeparator)}';
 
+  Future<List<SyncMusicTrack>> listMusic() async {
+    if (await isReparsePoint?.call(root.path) == true ||
+        await FileSystemEntity.type(root.path, followLinks: false) !=
+            FileSystemEntityType.directory) {
+      throw const SyncFailure('The selected music folder is unavailable.');
+    }
+    final tracks = <SyncMusicTrack>[];
+    final pending = <({Directory directory, String prefix})>[
+      (directory: root, prefix: ''),
+    ];
+    while (pending.isNotEmpty) {
+      final current = pending.removeLast();
+      await for (final entity in current.directory.list(followLinks: false)) {
+        if (await isReparsePoint?.call(entity.path) == true) continue;
+        final name = entity.uri.pathSegments
+            .where((part) => part.isNotEmpty)
+            .last;
+        if (_isInternalMusicPath(name)) continue;
+        final relative = current.prefix.isEmpty
+            ? name
+            : '${current.prefix}/$name';
+        final type = await FileSystemEntity.type(
+          entity.path,
+          followLinks: false,
+        );
+        if (type == FileSystemEntityType.link) continue;
+        if (type == FileSystemEntityType.directory) {
+          pending.add((directory: Directory(entity.path), prefix: relative));
+        } else if (type == FileSystemEntityType.file) {
+          final path = SyncPath.parse(relative);
+          if (!path.isMusic) continue;
+          final stat = await File(entity.path).stat();
+          tracks.add(
+            SyncMusicTrack(
+              path: path,
+              size: stat.size,
+              modifiedMs: stat.modified.millisecondsSinceEpoch,
+            ),
+          );
+        }
+      }
+    }
+    tracks.sort((left, right) => left.path.compareTo(right.path));
+    return tracks;
+  }
+
+  Future<void> deleteMusic(SyncMusicTrack track) async {
+    final path = track.path;
+    if (!path.isMusic || path.value.split('/').any(_isInternalMusicPath)) {
+      throw SyncFailure(
+        'Only music files in the selected folder can be deleted.',
+        path: path,
+      );
+    }
+    await _checkPath(path);
+    final file = _file(path);
+    if (await FileSystemEntity.type(file.path, followLinks: false) !=
+        FileSystemEntityType.file) {
+      throw SyncFailure(
+        'The selected music file no longer exists.',
+        path: path,
+      );
+    }
+    final stat = await file.stat();
+    if (stat.size != track.size ||
+        stat.modified.millisecondsSinceEpoch != track.modifiedMs) {
+      throw SyncFailure(
+        'The selected music file changed; refresh the list.',
+        path: path,
+      );
+    }
+    await file.delete();
+  }
+
+  static bool _isInternalMusicPath(String segment) => const <String>{
+    '.synctune',
+    '.synctune-local',
+    '.synctune-local-v2',
+  }.contains(segment.toLowerCase());
+
   File _file(SyncPath path) {
     final target = File(_join(root.path, path.value));
     final normalizedRoot = root.absolute.path.toLowerCase().replaceAll(
@@ -142,8 +222,9 @@ final class FileLocalStore implements LocalStore {
             .last;
         if (name.toLowerCase() == '.synctune' ||
             name.toLowerCase() == '.synctune-local' ||
-            name.toLowerCase() == '.synctune-local-v2')
+            name.toLowerCase() == '.synctune-local-v2') {
           continue;
+        }
         final relative = current.prefix.isEmpty
             ? name
             : '${current.prefix}/$name';
@@ -153,8 +234,9 @@ final class FileLocalStore implements LocalStore {
         );
         if (type == FileSystemEntityType.link) continue;
         if (type != FileSystemEntityType.file &&
-            type != FileSystemEntityType.directory)
+            type != FileSystemEntityType.directory) {
           continue;
+        }
         final path = SyncPath.parse(relative);
         occupiedPaths.add(
           SyncOccupiedPath(
@@ -182,7 +264,11 @@ final class FileLocalStore implements LocalStore {
         final digest = await _hashStream(
           file.openRead(),
           token,
-          onBytes: onBytes == null ? null : (bytes) => onBytes(path, bytes),
+          onBytes: onBytes == null
+              ? null
+              : (bytes) async {
+                  await onBytes(path, bytes);
+                },
         );
         files.add(
           SyncFile(
@@ -224,8 +310,9 @@ final class FileLocalStore implements LocalStore {
     await _checkPath(path);
     final file = _file(path);
     if (await FileSystemEntity.type(file.path, followLinks: false) !=
-        FileSystemEntityType.file)
+        FileSystemEntityType.file) {
       return null;
+    }
     return (await file.stat()).modified.millisecondsSinceEpoch;
   }
 
@@ -246,8 +333,9 @@ final class FileLocalStore implements LocalStore {
     await _checkInternalPath();
     final stage = _artifact(operationId, 'part');
     await _checkArtifact(stage);
-    if (!await stage.exists())
+    if (!await stage.exists()) {
       throw const SyncFailure('The staged upload is missing.');
+    }
     token.throwIfCancelled();
     return stage.openRead();
   }
@@ -294,27 +382,32 @@ final class FileLocalStore implements LocalStore {
         if (offset < existingLength) {
           final overlap = min(chunk.length, existingLength - offset);
           final saved = await existing!.read(overlap);
-          if (saved.length != overlap)
+          if (saved.length != overlap) {
             throw SyncFailure('A saved staging prefix is incomplete.');
+          }
           for (var index = 0; index < overlap; index++) {
-            if (saved[index] != chunk[index])
+            if (saved[index] != chunk[index]) {
               throw SyncFailure(
                 'The source changed since the interrupted file operation.',
               );
+            }
           }
           start = overlap;
         }
-        if (start < chunk.length)
+        if (start < chunk.length) {
           await output.writeFrom(chunk, start, chunk.length);
+        }
         offset += chunk.length;
         await output.flush();
       }
       converter.close();
-      if (offset < existingLength)
+      if (offset < existingLength) {
         throw SyncFailure('The saved staging file is longer than its source.');
+      }
       final actual = digest.value.toString();
-      if (actual != expectedHash)
+      if (actual != expectedHash) {
         throw SyncFailure('Staged content failed its SHA-256 check.');
+      }
       return operationId;
     } catch (_) {
       rethrow;
@@ -342,17 +435,19 @@ final class FileLocalStore implements LocalStore {
     token.throwIfCancelled();
     await _checkPath(path, allowMissingLeaf: true);
     final stagedHash = (await _hashStream(stage.openRead(), token)).sha256;
-    if (stagedHash != expectedHash)
+    if (stagedHash != expectedHash) {
       throw SyncFailure('Staged content changed before commit.', path: path);
+    }
     final currentHash = await hash(path, token);
     if (currentHash == expectedHash) {
       if (await backup.exists()) {
         final backupHash = (await _hashStream(backup.openRead(), token)).sha256;
-        if (backupHash != previousHash)
+        if (backupHash != previousHash) {
           throw SyncFailure(
             'Committed file has an unexpected recovery backup.',
             path: path,
           );
+        }
       }
       return;
     }
@@ -378,32 +473,35 @@ final class FileLocalStore implements LocalStore {
     if (currentHash != null && !hasMovedBackup) {
       if (await backup.exists()) {
         final savedHash = (await _hashStream(backup.openRead(), token)).sha256;
-        if (savedHash != currentHash)
+        if (savedHash != currentHash) {
           throw SyncFailure(
             'Recovery backup and target do not match.',
             path: path,
           );
+        }
         throw SyncFailure(
           'Recovery backup and target both exist; manual recovery is required.',
           path: path,
         );
       }
-      if (await hash(path, token) != currentHash)
+      if (await hash(path, token) != currentHash) {
         throw SyncFailure(
           'Local file changed before it could be backed up.',
           path: path,
         );
+      }
       await target.rename(backup.path);
     }
     try {
       token.throwIfCancelled();
       await stage.rename(target.path);
       final writtenHash = await hash(path, token);
-      if (writtenHash != expectedHash)
+      if (writtenHash != expectedHash) {
         throw SyncFailure(
           'Committed local file failed verification.',
           path: path,
         );
+      }
     } catch (_) {
       final targetType = await FileSystemEntity.type(
         target.path,
@@ -434,35 +532,40 @@ final class FileLocalStore implements LocalStore {
     final actual = await hash(path, token);
     if (actual == null) {
       if (await backup.exists() &&
-          (await _hashStream(backup.openRead(), token)).sha256 == expectedHash)
+          (await _hashStream(backup.openRead(), token)).sha256 ==
+              expectedHash) {
         return;
+      }
       throw SyncFailure(
         'Local delete target disappeared before a recovery copy was confirmed.',
         path: path,
       );
     }
-    if (actual != expectedHash)
+    if (actual != expectedHash) {
       throw SyncFailure(
         'Local file changed before deletion; rescan is required.',
         path: path,
       );
+    }
     if (await backup.exists()) {
       final saved = (await _hashStream(backup.openRead(), token)).sha256;
-      if (saved != expectedHash)
+      if (saved != expectedHash) {
         throw SyncFailure(
           'Existing recovery backup has unexpected content.',
           path: path,
         );
+      }
       throw SyncFailure(
         'Both the delete target and its recovery copy exist.',
         path: path,
       );
     }
-    if (await hash(path, token) != expectedHash)
+    if (await hash(path, token) != expectedHash) {
       throw SyncFailure(
         'Local file changed before it could be backed up.',
         path: path,
       );
+    }
     await target.rename(backup.path);
     if (await FileSystemEntity.type(target.path, followLinks: false) !=
         FileSystemEntityType.notFound) {
@@ -483,8 +586,9 @@ final class FileLocalStore implements LocalStore {
     final target = _file(path);
     if (!await backup.exists()) return;
     final backupHash = (await _hashStream(backup.openRead(), token)).sha256;
-    if (backupHash != expectedHash)
+    if (backupHash != expectedHash) {
       throw SyncFailure('Recovery copy has unexpected content.', path: path);
+    }
     final current = await hash(path, token);
     if (current != null) {
       if (current == expectedHash) return;
@@ -515,10 +619,11 @@ final class FileLocalStore implements LocalStore {
     if (!operation.complete &&
         !(operation.needsRescan &&
             !operation.localDone &&
-            !operation.remoteDone))
+            !operation.remoteDone)) {
       throw SyncFailure(
         'Cannot clean artifacts before both sides are confirmed or a safe rescan is recorded.',
       );
+    }
     await _checkInternalPath();
     for (final item in <({String? key, String suffix, String? hash})>[
       (
@@ -534,10 +639,11 @@ final class FileLocalStore implements LocalStore {
     ]) {
       final key = item.key;
       if (key == null || key.isEmpty) continue;
-      if (key != operation.id)
+      if (key != operation.id) {
         throw SyncFailure(
           'Refusing to clean an artifact not owned by this operation.',
         );
+      }
       final file = _artifact(operation.id, item.suffix);
       await _checkArtifact(file);
       if (await file.exists()) {
@@ -564,10 +670,11 @@ final class FileLocalStore implements LocalStore {
       );
     }
     final rootType = await FileSystemEntity.type(root.path, followLinks: false);
-    if (rootType != FileSystemEntityType.directory)
+    if (rootType != FileSystemEntityType.directory) {
       throw const SyncFailure(
         'The selected folder is unavailable or is a reparse point.',
       );
+    }
     final segments = path.value.split('/');
     var cursor = root.path;
     for (var index = 0; index < segments.length; index++) {
@@ -579,14 +686,16 @@ final class FileLocalStore implements LocalStore {
         );
       }
       final type = await FileSystemEntity.type(cursor, followLinks: false);
-      if (type == FileSystemEntityType.link)
+      if (type == FileSystemEntityType.link) {
         throw SyncFailure(
           'A symbolic link or reparse point is not a music file.',
           path: path,
         );
+      }
       if (type == FileSystemEntityType.notFound &&
-          (allowMissingLeaf || index < segments.length - 1))
+          (allowMissingLeaf || index < segments.length - 1)) {
         continue;
+      }
       if (index < segments.length - 1 &&
           type != FileSystemEntityType.directory) {
         throw SyncFailure('A parent path is not a directory.', path: path);
@@ -601,10 +710,11 @@ final class FileLocalStore implements LocalStore {
       );
     }
     final rootType = await FileSystemEntity.type(root.path, followLinks: false);
-    if (rootType != FileSystemEntityType.directory)
+    if (rootType != FileSystemEntityType.directory) {
       throw const SyncFailure(
         'The selected folder is unavailable or is a reparse point.',
       );
+    }
     final first = Directory(_join(root.path, '.synctune-local-v2'));
     if (await isReparsePoint?.call(first.path) == true) {
       throw const SyncFailure(

@@ -33,3 +33,8 @@ final class SyncFolderSelection {
 abstract interface class SyncFolderPicker {
   Future<SyncFolderSelection?> pick();
 }
+
+abstract interface class SyncMusicLibrary {
+  Future<List<SyncMusicTrack>> listMusic(SyncSettings settings);
+  Future<void> deleteMusic(SyncSettings settings, SyncMusicTrack track);
+}

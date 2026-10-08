@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
@@ -16,17 +15,19 @@ import '../sync/sync_platform.dart';
 /// Keystore, and foreground-service work; Windows uses Dart IO and a small
 /// Win32 channel for the picker and Credential Manager.
 final class SyncPlatformAdapters
-    implements SyncCredentialStore, SyncFolderPicker, SyncExecutionHost {
+    implements
+        SyncCredentialStore,
+        SyncFolderPicker,
+        SyncExecutionHost,
+        SyncMusicLibrary {
   SyncPlatformAdapters({MethodChannel? channel})
     : channel = channel ?? const MethodChannel('synctune/sync_platform');
 
   final MethodChannel channel;
-  SyncController? _controller;
   DateTime _lastNotificationUpdate = DateTime.fromMillisecondsSinceEpoch(0);
   SyncPhase? _lastNotifiedPhase;
 
   void bind(SyncController controller) {
-    _controller = controller;
     channel.setMethodCallHandler((call) async {
       switch (call.method) {
         case 'cancelSync':
@@ -98,6 +99,12 @@ final class SyncPlatformAdapters
     return value;
   }
 
+  Future<bool> hasSavedCredential(SyncSettings settings) async =>
+      await channel.invokeMethod<bool>('credentialExists', <String, Object?>{
+        'identity': _credentialIdentity(settings),
+      }) ??
+      false;
+
   @override
   Future<void> write(SyncSettings settings, String secret) async {
     if (secret.isEmpty) throw const SyncFailure('Enter the WebDAV password.');
@@ -115,6 +122,40 @@ final class SyncPlatformAdapters
   }
 
   @override
+  Future<List<SyncMusicTrack>> listMusic(SyncSettings settings) async {
+    if (Platform.isAndroid) {
+      return _SafLocalStore(
+        channel,
+        settings.localRoot,
+        settings.localGeneration,
+      ).listMusic();
+    }
+    return _fileStore(settings).listMusic();
+  }
+
+  @override
+  Future<void> deleteMusic(SyncSettings settings, SyncMusicTrack track) async {
+    if (Platform.isAndroid) {
+      await _SafLocalStore(
+        channel,
+        settings.localRoot,
+        settings.localGeneration,
+      ).deleteMusic(track);
+    } else {
+      await _fileStore(settings).deleteMusic(track);
+    }
+  }
+
+  FileLocalStore _fileStore(SyncSettings settings) => FileLocalStore(
+    settings.localRoot,
+    isReparsePoint: (path) async =>
+        await channel.invokeMethod<bool>('isReparsePoint', <String, Object?>{
+          'path': path,
+        }) ??
+        false,
+  );
+
+  @override
   Future<void> start(SyncSettings settings) async {
     if (Platform.isAndroid) {
       await channel.invokeMethod<void>('foregroundStart');
@@ -128,8 +169,9 @@ final class SyncPlatformAdapters
     final now = DateTime.now();
     if (now.difference(_lastNotificationUpdate) <
             const Duration(milliseconds: 600) &&
-        progress.phase == _lastNotifiedPhase)
+        progress.phase == _lastNotifiedPhase) {
       return;
+    }
     _lastNotificationUpdate = now;
     _lastNotifiedPhase = progress.phase;
     await channel.invokeMethod<void>('foregroundUpdate', <String, Object?>{
@@ -167,8 +209,9 @@ final class _ConfiguredLocalStore implements ConfigurableLocalStore {
   LocalStore? _delegate;
 
   void _configure(SyncSettings settings) {
-    if (_settings?.syncIdentity == settings.syncIdentity && _delegate != null)
+    if (_settings?.syncIdentity == settings.syncIdentity && _delegate != null) {
       return;
+    }
     _settings = settings;
     _delegate = Platform.isAndroid
         ? _SafLocalStore(channel, settings.localRoot, settings.localGeneration)
@@ -319,6 +362,47 @@ final class _SafLocalStore implements LocalStore {
     return result['modifiedMs'] as int?;
   }
 
+  Future<List<SyncMusicTrack>> listMusic() async {
+    final response = await _call('safListMusic');
+    final raw = response['tracks'];
+    if (raw is! List) {
+      throw const SyncFailure('The SAF music list is incomplete.');
+    }
+    final tracks = <SyncMusicTrack>[];
+    for (final item in raw) {
+      if (item is! Map) {
+        throw const SyncFailure('The SAF music list contains an invalid item.');
+      }
+      final value = Map<String, Object?>.from(item.cast<String, Object?>());
+      final path = SyncPath.parse(value['path'] as String);
+      final size = value['size'];
+      final modifiedMs = value['modifiedMs'];
+      if (!path.isMusic || size is! num || modifiedMs is! num) {
+        throw SyncFailure(
+          'The SAF music list contains invalid metadata.',
+          path: path,
+        );
+      }
+      tracks.add(
+        SyncMusicTrack(
+          path: path,
+          size: size.toInt(),
+          modifiedMs: modifiedMs.toInt(),
+        ),
+      );
+    }
+    tracks.sort((left, right) => left.path.compareTo(right.path));
+    return tracks;
+  }
+
+  Future<void> deleteMusic(SyncMusicTrack track) async {
+    await _call('safDeleteMusic', <String, Object?>{
+      'path': track.path.value,
+      'expectedSize': track.size,
+      'expectedModifiedMs': track.modifiedMs,
+    });
+  }
+
   @override
   Future<SyncScanResult> scan(
     CancellationToken token, {
@@ -341,19 +425,22 @@ final class _SafLocalStore implements LocalStore {
       });
       final raw = response['files'];
       final rawOccupied = response['occupiedPaths'];
-      if (raw is! List)
+      if (raw is! List) {
         throw const SyncFailure(
           'The SAF scanner returned an incomplete listing.',
         );
+      }
       final files = <SyncFile>[];
-      if (rawOccupied is! List)
+      if (rawOccupied is! List) {
         throw const SyncFailure(
           'The SAF scanner did not return filesystem path occupancy.',
         );
+      }
       final occupiedPaths = <SyncOccupiedPath>[];
       for (final entry in rawOccupied) {
-        if (entry is! Map)
+        if (entry is! Map) {
           throw const SyncFailure('The SAF scanner returned an invalid path.');
+        }
         final map = Map<String, Object?>.from(entry.cast<String, Object?>());
         final path = SyncPath.parse(map['path'] as String);
         final directory = map['isDirectory'];
@@ -369,10 +456,11 @@ final class _SafLocalStore implements LocalStore {
       }
       for (final entry in raw) {
         token.throwIfCancelled();
-        if (entry is! Map)
+        if (entry is! Map) {
           throw const SyncFailure(
             'The SAF scanner returned an invalid file record.',
           );
+        }
         final map = Map<String, Object?>.from(entry.cast<String, Object?>());
         final path = SyncPath.parse(map['path'] as String);
         final hash = map['sha256'] as String;
@@ -479,11 +567,12 @@ final class _SafLocalStore implements LocalStore {
       var written = 0;
       while (written < count) {
         if (savedOffset >= savedChunk.length) {
-          if (!await saved!.moveNext())
+          if (!await saved!.moveNext()) {
             throw const SyncFailure(
               'The saved SAF staging prefix is truncated.',
             );
-          savedChunk = saved.current;
+          }
+          savedChunk = saved!.current;
           savedOffset = 0;
           if (savedChunk.isEmpty) continue;
         }
@@ -621,8 +710,9 @@ final class _SafLocalStore implements LocalStore {
     if (!operation.complete &&
         !(operation.needsRescan &&
             !operation.localDone &&
-            !operation.remoteDone))
+            !operation.remoteDone)) {
       throw const SyncFailure('Cannot clean incomplete SAF recovery data.');
+    }
     await _callCancellable('safCleanupOperation', <String, Object?>{
       'operationId': operation.id,
       'stageSha256': operation.expectedLocalHash,
@@ -640,8 +730,9 @@ final class _SafLocalStore implements LocalStore {
     token.throwIfCancelled();
     final opened = await _call(openMethod, arguments);
     final handle = opened['readHandle'] as String?;
-    if (handle == null || handle.isEmpty)
+    if (handle == null || handle.isEmpty) {
       throw const SyncFailure('The SAF file could not be opened.');
+    }
     final removeCancel = token.listen(() {
       unawaited(
         channel.invokeMethod<void>(closeMethod, <String, Object?>{
@@ -659,8 +750,9 @@ final class _SafLocalStore implements LocalStore {
           'maxBytes': 256 * 1024,
         });
         final raw = response['bytes'];
-        if (raw is! Uint8List)
+        if (raw is! Uint8List) {
           throw const SyncFailure('The SAF reader returned invalid file data.');
+        }
         if (raw.isNotEmpty) yield raw;
         eof = response['eof'] == true;
       }

@@ -60,7 +60,7 @@ final class SyncPath implements Comparable<SyncPath> {
     final parts = value.split('/');
     for (final part in parts) {
       final base = part.split('.').first.toUpperCase();
-      final normalizedBase = base.replaceAll(
+      final normalizedBase = base.replaceFirstMapped(
         RegExp(r'[¹²³]$'),
         (match) => const {'¹': '1', '²': '2', '³': '3'}[match[0]!]!,
       );
@@ -293,6 +293,24 @@ final class SyncSettings {
   final String username;
   final String language;
 
+  String get effectiveRemoteUrl {
+    final base = Uri.parse(serverUrl.trim());
+    final remote = remoteRoot.trim();
+    final remoteSegments = remote.isEmpty || remote == '/'
+        ? const <String>[]
+        : remote.split('/').where((part) => part.isNotEmpty).toList();
+    return base
+        .replace(
+          pathSegments: <String>[
+            ...base.pathSegments.where((part) => part.isNotEmpty),
+            ...remoteSegments,
+          ],
+          query: null,
+          fragment: null,
+        )
+        .toString();
+  }
+
   String get syncIdentity => <String>[
     localRootId,
     localGeneration,
@@ -300,6 +318,18 @@ final class SyncSettings {
     remoteRoot.trim(),
     username.trim(),
   ].join('\n');
+}
+
+final class SyncMusicTrack {
+  const SyncMusicTrack({
+    required this.path,
+    required this.size,
+    required this.modifiedMs,
+  });
+
+  final SyncPath path;
+  final int size;
+  final int modifiedMs;
 }
 
 enum SyncPhase {

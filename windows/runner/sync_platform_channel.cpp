@@ -115,6 +115,17 @@ EncodableValue ReadCredential(const std::string& identity) {
   return EncodableValue(secret);
 }
 
+bool CredentialExists(const std::string& identity) {
+  PCREDENTIALW credential = nullptr;
+  const auto target = CredentialTarget(identity);
+  if (!CredReadW(target.c_str(), CRED_TYPE_GENERIC, 0, &credential)) {
+    if (GetLastError() == ERROR_NOT_FOUND) return false;
+    throw std::runtime_error("Windows Credential Manager could not inspect the saved password.");
+  }
+  CredFree(credential);
+  return true;
+}
+
 void WriteCredential(const std::string& identity, const std::string& value) {
   if (value.empty()) throw std::runtime_error("Enter the WebDAV password.");
   if (value.size() > CRED_MAX_CREDENTIAL_BLOB_SIZE) {
@@ -208,6 +219,8 @@ void SyncPlatformChannel::HandleMethodCall(
       result->Success(FolderSelection(window_));
     } else if (call.method_name() == "credentialRead") {
       result->Success(ReadCredential(StringArgument(call.arguments(), "identity")));
+    } else if (call.method_name() == "credentialExists") {
+      result->Success(EncodableValue(CredentialExists(StringArgument(call.arguments(), "identity"))));
     } else if (call.method_name() == "credentialWrite") {
       WriteCredential(StringArgument(call.arguments(), "identity"),
                       StringArgument(call.arguments(), "secret"));
