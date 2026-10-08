@@ -33,6 +33,7 @@ Future<void> main() async {
         stateStore: stateStore,
         platform: platform,
         controller: controller,
+        musicLibrary: platform,
       ),
     );
   } catch (error) {
