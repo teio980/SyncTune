@@ -251,6 +251,7 @@ final class SyncExecutor {
             tombstone: op.source,
             metadataCondition: op.metadataCondition,
             token: token);
+        await local.saveTombstone(op.path, op.source!, token: token);
       case SyncOperationKind.tombstoneRemote:
         if (op.source == null) {
           throw NeedsRescan('missing remote tombstone source');
@@ -274,6 +275,7 @@ final class SyncExecutor {
             tombstone: op.source!,
             metadataCondition: metaCond,
             token: token);
+        await local.saveTombstone(op.path, op.source!, token: token);
       case SyncOperationKind.deleteLocal:
         final localCondition = op.localCondition;
         if (localCondition is! LocalMatchSha256) {

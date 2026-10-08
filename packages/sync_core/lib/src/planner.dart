@@ -191,14 +191,16 @@ final class SyncPlanner {
         continue;
       }
       final chosen = result.entry!;
+      final actualRemote = remoteObject?.entry;
+      final actualLocal = local[path];
       final contentSameRemote =
-          remoteEntry != null && chosen.contentEquals(remoteEntry);
+          actualRemote != null && chosen.contentEquals(actualRemote);
       final favoriteSameRemote =
-          remoteEntry != null && chosen.favorite == remoteEntry.favorite;
+          actualRemote != null && chosen.favorite == actualRemote.favorite;
       final contentSameLocal =
-          localEntry != null && chosen.contentEquals(localEntry);
+          actualLocal != null && chosen.contentEquals(actualLocal);
       final favoriteSameLocal =
-          localEntry != null && chosen.favorite == localEntry.favorite;
+          actualLocal != null && chosen.favorite == actualLocal.favorite;
 
       if (chosen.kind == SyncEntryKind.directory &&
           (!contentSameRemote || !contentSameLocal)) {
@@ -215,43 +217,62 @@ final class SyncPlanner {
         continue;
       }
 
+      if (chosen.isDeleted) {
+        if (!canDelete) {
+          deletionsSuppressed = true;
+        } else if (!contentSameRemote) {
+          final hasRemoteFile = remoteEntry != null && !remoteEntry.isDeleted;
+          final kind = hasRemoteFile
+              ? SyncOperationKind.deleteRemote
+              : SyncOperationKind.tombstoneRemote;
+          operations.add(_op(
+            planId,
+            root.generation,
+            kind,
+            path,
+            chosen,
+            remoteEntry,
+            kind == SyncOperationKind.deleteRemote
+                ? _contentCondition(remoteObject)
+                : null,
+            null,
+            null,
+            _metadataCondition(remoteObject),
+          ));
+        } else if (!contentSameLocal) {
+          final hasLocalFile = localEntry != null && !localEntry.isDeleted;
+          final kind = hasLocalFile
+              ? SyncOperationKind.deleteLocal
+              : SyncOperationKind.tombstoneLocal;
+          operations.add(_op(
+            planId,
+            root.generation,
+            kind,
+            path,
+            chosen,
+            null,
+            null,
+            null,
+            kind == SyncOperationKind.deleteLocal ? localEntry?.sha256 : null,
+          ));
+        }
+        continue;
+      }
+
       if (result.choice == MergeChoice.local) {
         if (!contentSameRemote) {
-          if (chosen.isDeleted && !canDelete) {
-            deletionsSuppressed = true;
-          } else if (chosen.isDeleted) {
-            final hasRemoteFile = remoteEntry != null && !remoteEntry.isDeleted;
-            final kind = hasRemoteFile
-                ? SyncOperationKind.deleteRemote
-                : SyncOperationKind.tombstoneRemote;
-            operations.add(_op(
-              planId,
-              root.generation,
-              kind,
-              path,
-              chosen,
-              remoteEntry,
-              kind == SyncOperationKind.deleteRemote
-                  ? _contentCondition(remoteObject)
-                  : null,
-              null,
-              null,
-              _metadataCondition(remoteObject),
-            ));
-          } else {
-            operations.add(_op(
-              planId,
-              root.generation,
-              SyncOperationKind.putLocalToRemote,
-              path,
-              chosen,
-              remoteEntry,
-              _contentCondition(remoteObject),
-              null,
-              null,
-              _metadataCondition(remoteObject),
-            ));
-          }
+          operations.add(_op(
+            planId,
+            root.generation,
+            SyncOperationKind.putLocalToRemote,
+            path,
+            chosen,
+            remoteEntry,
+            _contentCondition(remoteObject),
+            null,
+            null,
+            _metadataCondition(remoteObject),
+          ));
         }
         if (!favoriteSameRemote && !chosen.isDeleted) {
           operations.add(_op(
@@ -279,39 +300,17 @@ final class SyncPlanner {
         }
       } else if (result.choice == MergeChoice.remote) {
         if (!contentSameLocal) {
-          if (chosen.isDeleted && !canDelete) {
-            deletionsSuppressed = true;
-          } else if (chosen.isDeleted) {
-            final hasLocalFile = localEntry != null && !localEntry.isDeleted;
-            final kind = hasLocalFile
-                ? SyncOperationKind.deleteLocal
-                : SyncOperationKind.tombstoneLocal;
-            operations.add(_op(
-              planId,
-              root.generation,
-              kind,
-              path,
-              chosen,
-              null,
-              null,
-              null,
-              kind == SyncOperationKind.deleteLocal
-                  ? localEntry?.sha256
-                  : null,
-            ));
-          } else {
-            operations.add(_op(
-              planId,
-              root.generation,
-              SyncOperationKind.putRemoteToLocal,
-              path,
-              chosen,
-              null,
-              null,
-              null,
-              localEntry?.sha256,
-            ));
-          }
+          operations.add(_op(
+            planId,
+            root.generation,
+            SyncOperationKind.putRemoteToLocal,
+            path,
+            chosen,
+            null,
+            null,
+            null,
+            localEntry?.sha256,
+          ));
         }
         if (!favoriteSameLocal && !chosen.isDeleted) {
           operations.add(_op(

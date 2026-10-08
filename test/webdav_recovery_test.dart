@@ -379,6 +379,21 @@ void main() {
       final second = await _run(db, local, remote, 'second-sync');
       second.requireConfirmed();
       expect(second.plan.operations, isEmpty);
+
+      // Now test local rename:
+      local.files.remove(path);
+      local.entries.remove(path);
+      final newPath = SyncPath.parse('album/《絕區零》橘福福EP食通萬物 修心修身 .mp3');
+      local.seed(_file('abc', path: newPath), 'abc');
+      final third = await _run(db, local, remote, 'third-sync-rename');
+      third.requireConfirmed();
+      expect(third.baselineConfirmed, isTrue);
+
+      // Now test: server has the tombstone, but local lost it:
+      local.entries.remove(path);
+      final fourth = await _run(db, local, remote, 'fourth-sync-tombstone');
+      fourth.requireConfirmed();
+      expect(fourth.baselineConfirmed, isTrue);
     },
   );
 

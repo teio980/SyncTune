@@ -471,6 +471,52 @@ void main() {
     expect(plan.operations.single.kind, SyncOperationKind.deleteRemote);
     expect(plan.operations.single.condition, isA<MatchEtag>());
   });
+  test('deleteRemote persists the tombstone locally and confirms post-scan baseline',
+      () async {
+    final path = SyncPath.parse('music/song.mp3');
+    final base = file('song', path, 'a');
+    final tombstone = SyncEntry.tombstone(
+      id: 'song',
+      path: path,
+      modifiedAtUtc: now,
+      revision: 2,
+    );
+    final plan = const SyncPlanner().plan(
+      planId: 'delete-remote-plan',
+      root: root,
+      baseline: local([base]),
+      local: local([]),
+      remote: remote({path: RemoteObject(entry: base, etag: '"e1"')}),
+    );
+    expect(plan.operations.single.kind, SyncOperationKind.deleteRemote);
+
+    final localStore = FakeLocal();
+    final remoteRepo = FakeRemote();
+    final result = await const SyncCoordinator().run(
+      root,
+      planId: 'exec-delete-remote',
+      localSnapshots: SnapshotSequenceLocal([
+        local([]),
+        local([tombstone]),
+      ]),
+      remoteSnapshots: SnapshotSequenceRemote([
+        remote({
+          path: RemoteObject(
+              entry: base, etag: '"e1"', metadataEtag: '"m1"')
+        }),
+        remote({
+          path: RemoteObject(entry: tombstone, etag: null, metadataEtag: '"m1"')
+        }),
+      ]),
+      baseline: FakeBaseline(local([base])),
+      local: localStore,
+      remote: remoteRepo,
+      journal: FakeJournal(),
+    );
+    result.requireConfirmed();
+    expect(localStore.saveTombstoneCalls, 1);
+    expect(localStore.savedLocalTombstone?.isDeleted, isTrue);
+  });
   test('local delete journals recovery intent before touching the provider',
       () async {
     final path = SyncPath.parse('music/song.mp3');
@@ -1255,9 +1301,10 @@ final class SnapshotSequenceRemote implements RemoteSnapshotProvider {
 }
 
 final class FakeBaseline implements BaselineStore {
+  FakeBaseline([this.saved]);
   SyncSnapshot? saved;
   @override
-  Future<SyncSnapshot?> load(SyncRoot root) async => null;
+  Future<SyncSnapshot?> load(SyncRoot root) async => saved;
   @override
   Future<void> saveConfirmed(SyncRoot root, SyncSnapshot snapshot,
       {required String planId}) async {
