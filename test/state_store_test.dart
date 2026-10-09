@@ -16,28 +16,30 @@ void main() {
     await directory.delete(recursive: true);
   });
 
-  test(
-    'fresh state has only settings, baseline, and pending operations',
-    () async {
-      final path = '${directory.path}${Platform.pathSeparator}state.sqlite';
-      final store = SqliteStateStore(path);
-      await store.open();
-      store.close();
+  test('fresh state creates scan checkpoints', () async {
+    final path = '${directory.path}${Platform.pathSeparator}state.sqlite';
+    final store = SqliteStateStore(path);
+    await store.open();
+    store.close();
 
-      final database = sqlite3.open(path);
-      try {
-        final tables = database
-            .select(
-              "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
-            )
-            .map((row) => row['name'] as String)
-            .toSet();
-        expect(tables, <String>{'settings', 'baseline', 'pending_operations'});
-      } finally {
-        database.close();
-      }
-    },
-  );
+    final database = sqlite3.open(path);
+    try {
+      final tables = database
+          .select(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+          )
+          .map((row) => row['name'] as String)
+          .toSet();
+      expect(tables, <String>{
+        'settings',
+        'baseline',
+        'pending_operations',
+        'scan_checkpoint',
+      });
+    } finally {
+      database.close();
+    }
+  });
 
   test(
     'a configuration identity change cannot discard pending recovery',
@@ -75,6 +77,31 @@ void main() {
         throwsA(isA<SyncFailure>()),
       );
       expect(store.loadPending(), hasLength(1));
+    },
+  );
+
+  test(
+    'a configuration identity change invalidates scan checkpoints',
+    () async {
+      final store = SqliteStateStore(
+        '${directory.path}${Platform.pathSeparator}state.sqlite',
+      );
+      await store.open();
+      addTearDown(store.close);
+      store.ensureIdentity('first configuration');
+      store
+          .scanCheckpoint(reuse: false)
+          .recordLocal(
+            SyncPath.parse('song.mp3'),
+            sha256: List<String>.filled(64, 'a').join(),
+            size: 12,
+            modifiedMs: 1,
+          );
+      expect(store.scanCheckpointCount(), 1);
+
+      store.ensureIdentity('second configuration');
+
+      expect(store.scanCheckpointCount(), 0);
     },
   );
 

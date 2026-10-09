@@ -121,11 +121,16 @@ final class SyncFailure implements Exception {
     this.path,
     this.statusCode,
     this.conditionalWriteRejected = false,
+    this.retryable = false,
   });
   final String message;
   final SyncPath? path;
   final int? statusCode;
   final bool conditionalWriteRejected;
+
+  /// True for a dropped connection or timeout on a read-only request, where
+  /// repeating the same request cannot change either store.
+  final bool retryable;
   @override
   String toString() => path == null ? message : '$message (${path!.value})';
 }
@@ -190,6 +195,40 @@ final class SyncScanResult {
 
   final List<SyncFile> files;
   final List<SyncOccupiedPath> occupiedPaths;
+}
+
+/// Content hashes computed by an earlier, unfinished scan.
+///
+/// Each hash is written as soon as one file has been read, so an interrupted
+/// scan can continue without reading the same content again. A hash is only
+/// returned while the identifying metadata still matches: size and
+/// modification time for local files, the strong ETag for WebDAV files. The
+/// store is cleared after a fully verified sync, so a normal sync still reads
+/// every local file; only a resumed scan relies on the metadata match, and the
+/// final verification (which never reuses entries) re-reads everything.
+abstract interface class ScanCheckpoint {
+  String? localHash(
+    SyncPath path, {
+    required int size,
+    required int modifiedMs,
+  });
+  ({String sha256, int size})? remoteFile(
+    SyncPath path, {
+    required String etag,
+    int? size,
+  });
+  void recordLocal(
+    SyncPath path, {
+    required String sha256,
+    required int size,
+    required int modifiedMs,
+  });
+  void recordRemote(
+    SyncPath path, {
+    required String sha256,
+    required int size,
+    required String etag,
+  });
 }
 
 void validateSyncTargetPaths(
@@ -373,6 +412,7 @@ final class SyncProgress {
         ? (bytesDone / total).clamp(0.0, 1.0).toDouble()
         : null;
   }
+
   SyncProgress copyWith({
     SyncPhase? phase,
     String? currentFile,

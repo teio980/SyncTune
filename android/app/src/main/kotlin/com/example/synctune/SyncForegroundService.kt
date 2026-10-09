@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -66,6 +67,7 @@ class SyncForegroundService : Service() {
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     private lateinit var notificationManager: NotificationManager
 
     override fun onCreate() {
@@ -234,10 +236,22 @@ class SyncForegroundService : Service() {
                 "synctune:sync_service_wakelock").apply { setReferenceCounted(false) }
         }
         if (wakeLock?.isHeld == false) wakeLock?.acquire()
+        try {
+            if (wifiLock == null) {
+                val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                @Suppress("DEPRECATION")
+                wifiLock = wifi?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                    "synctune:sync_service_wifilock")?.apply { setReferenceCounted(false) }
+            }
+            if (wifiLock?.isHeld == false) wifiLock?.acquire()
+        } catch (_: Exception) {
+            // Syncing still works without the lock; it only reduces Wi-Fi power-save drops.
+        }
     }
 
     private fun releaseWakeLock() {
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
+        try { if (wifiLock?.isHeld == true) wifiLock?.release() } catch (_: Exception) {}
     }
 
     override fun onDestroy() {

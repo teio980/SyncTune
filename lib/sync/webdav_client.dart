@@ -124,7 +124,105 @@ final class WebDavClient {
     }
   }
 
+  static const _readOnlyMethods = <String>{
+    'GET',
+    'HEAD',
+    'PROPFIND',
+    'OPTIONS',
+  };
+  static const _retryDelays = <Duration>[
+    Duration(seconds: 1),
+    Duration(seconds: 3),
+    Duration(seconds: 8),
+  ];
+
+  /// Waits before a retry, returning early (and throwing) on cancellation.
+  static Future<void> _retryPause(int attempt, CancellationToken token) async {
+    final delay = _retryDelays[min(attempt, _retryDelays.length - 1)];
+    await Future.any<void>(<Future<void>>[
+      Future<void>.delayed(delay),
+      token.whenCancelled,
+    ]);
+    token.throwIfCancelled();
+  }
+
+  static Future<void> _forEachChunk(
+    Stream<List<int>> stream,
+    CancellationToken token,
+    Future<void> Function(List<int> chunk) onChunk,
+  ) async {
+    token.throwIfCancelled();
+    final iterator = StreamIterator<List<int>>(stream);
+    Future<void>? streamCancellation;
+    final removeCancellationListener = token.listen(() {
+      streamCancellation ??= iterator.cancel();
+    });
+    try {
+      while (await iterator.moveNext()) {
+        token.throwIfCancelled();
+        await onChunk(iterator.current);
+      }
+      token.throwIfCancelled();
+    } finally {
+      removeCancellationListener();
+      await (streamCancellation ?? iterator.cancel());
+    }
+  }
+
+  static bool _isTransportFailure(DioException error) {
+    switch (error.type) {
+      case DioExceptionType.connectionError:
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.sendTimeout:
+        return true;
+      case DioExceptionType.unknown:
+        final cause = error.error;
+        return cause is SocketException ||
+            cause is HttpException ||
+            cause is TlsException ||
+            cause is TimeoutException;
+      default:
+        return false;
+    }
+  }
+
   Future<Response<T>> _request<T>(
+    SyncSettings settings,
+    String method,
+    Uri uri,
+    CancellationToken token, {
+    Object? data,
+    Map<String, String> headers = const <String, String>{},
+    ResponseType responseType = ResponseType.bytes,
+    int? contentLength,
+    bool conditionalMutation = false,
+    bool retryTransport = true,
+  }) async {
+    final retries = retryTransport && _readOnlyMethods.contains(method)
+        ? _retryDelays.length
+        : 0;
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await _requestOnce<T>(
+          settings,
+          method,
+          uri,
+          token,
+          data: data,
+          headers: headers,
+          responseType: responseType,
+          contentLength: contentLength,
+          conditionalMutation: conditionalMutation,
+        );
+      } on SyncFailure catch (error) {
+        if (!error.retryable || attempt >= retries) rethrow;
+        await _retryPause(attempt, token);
+      }
+    }
+  }
+
+  Future<Response<T>> _requestOnce<T>(
     SyncSettings settings,
     String method,
     Uri uri,
@@ -209,6 +307,8 @@ final class WebDavClient {
       throw SyncFailure(
         '$type ${error.message ?? ''}'.trim(),
         statusCode: error.response?.statusCode,
+        retryable:
+            _readOnlyMethods.contains(method) && _isTransportFailure(error),
       );
     } finally {
       removeCancellationListener();
@@ -223,6 +323,7 @@ final class WebDavClient {
     void Function(String path)? onFile,
     SyncByteProgress? onBytes,
     SyncFileProgress? onMusicFile,
+    ScanCheckpoint? checkpoint,
   }) async {
     await cacheDirectory.create(recursive: true);
     final root = _rootUri(settings);
@@ -357,28 +458,52 @@ final class WebDavClient {
               etag: etag,
             ),
           );
-        } else {
-          final hashed = await _hashRemote(
-            settings,
-            path,
-            token,
-            etag: etag,
-            expectedLength: entry.length,
-            onBytes: onBytes == null
-                ? null
-                : (bytes) async {
-                    await onBytes(path, bytes);
-                  },
-          );
+          continue;
+        }
+        final listedLength = entry.length;
+        final checkpointed = _isStrongEtag(etag)
+            ? checkpoint?.remoteFile(path, etag: etag!, size: listedLength)
+            : null;
+        if (checkpointed != null) {
           output.add(
             SyncFile(
               path: path,
-              sha256: hashed.sha256,
-              size: hashed.length,
-              etag: hashed.etag ?? etag,
+              sha256: checkpointed.sha256,
+              size: checkpointed.size,
+              etag: etag,
             ),
           );
+          continue;
         }
+        final hashed = await _hashRemote(
+          settings,
+          path,
+          token,
+          etag: etag,
+          expectedLength: entry.length,
+          onBytes: onBytes == null
+              ? null
+              : (bytes) async {
+                  await onBytes(path, bytes);
+                },
+        );
+        if (_isStrongEtag(etag) &&
+            (hashed.etag == null || hashed.etag == etag)) {
+          checkpoint?.recordRemote(
+            path,
+            sha256: hashed.sha256,
+            size: hashed.length,
+            etag: etag!,
+          );
+        }
+        output.add(
+          SyncFile(
+            path: path,
+            sha256: hashed.sha256,
+            size: hashed.length,
+            etag: hashed.etag ?? etag,
+          ),
+        );
       }
       if (!foundCurrent) {
         throw SyncFailure(
@@ -580,14 +705,13 @@ final class WebDavClient {
           path: path,
         );
       }
-      await for (final chunk in body.stream) {
-        token.throwIfCancelled();
+      await _forEachChunk(body.stream, token, (chunk) async {
         converter.add(chunk);
         sink.add(chunk);
         length += chunk.length;
         await onBytes?.call(chunk.length);
         await sink.flush();
-      }
+      });
       converter.close();
       await sink.flush();
       await sink.close();
@@ -618,6 +742,31 @@ final class WebDavClient {
     int? expectedLength,
     Future<void> Function(int bytes)? onBytes,
   }) async {
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await _hashRemoteOnce(
+          settings,
+          path,
+          token,
+          etag: etag,
+          expectedLength: expectedLength,
+          onBytes: onBytes,
+        );
+      } on SyncFailure catch (error) {
+        if (!error.retryable || attempt >= _retryDelays.length) rethrow;
+        await _retryPause(attempt, token);
+      }
+    }
+  }
+
+  Future<_HashResultWithEtag> _hashRemoteOnce(
+    SyncSettings settings,
+    SyncPath path,
+    CancellationToken token, {
+    String? etag,
+    int? expectedLength,
+    Future<void> Function(int bytes)? onBytes,
+  }) async {
     final headers = <String, String>{};
     if (_isStrongEtag(etag)) headers[HttpHeaders.ifMatchHeader] = etag!;
     final response = await _request<ResponseBody>(
@@ -627,6 +776,7 @@ final class WebDavClient {
       token,
       headers: headers,
       responseType: ResponseType.stream,
+      retryTransport: false,
     );
     _requireSuccess(response.statusCode, 'Read WebDAV file');
     final returnedEtag = response.headers.value(HttpHeaders.etagHeader);
@@ -643,11 +793,33 @@ final class WebDavClient {
     final digests = _DigestSink();
     final converter = sha256.startChunkedConversion(digests);
     var length = 0;
-    await for (final chunk in body.stream) {
-      token.throwIfCancelled();
-      converter.add(chunk);
-      length += chunk.length;
-      await onBytes?.call(chunk.length);
+    try {
+      await _forEachChunk(body.stream, token, (chunk) async {
+        converter.add(chunk);
+        length += chunk.length;
+        await onBytes?.call(chunk.length);
+      });
+    } on SyncCancelled {
+      rethrow;
+    } on SyncFailure {
+      rethrow;
+    } catch (error) {
+      if (token.isCancelled ||
+          (error is DioException && error.type == DioExceptionType.cancel)) {
+        throw const SyncCancelled();
+      }
+      final transport =
+          error is SocketException ||
+          error is HttpException ||
+          error is TlsException ||
+          error is TimeoutException ||
+          (error is DioException && _isTransportFailure(error));
+      if (!transport) rethrow;
+      throw SyncFailure(
+        'The WebDAV connection dropped while reading the file: $error',
+        path: path,
+        retryable: true,
+      );
     }
     converter.close();
     if (expectedLength != null && expectedLength != length) {

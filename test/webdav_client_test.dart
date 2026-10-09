@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:synctune/sync/state_store.dart';
 import 'package:synctune/sync/sync_model.dart';
 import 'package:synctune/sync/webdav_client.dart';
 
@@ -114,6 +116,135 @@ void main() {
           ),
         ),
       );
+    },
+  );
+
+  test('missing content length is measured from the downloaded body', () async {
+    var getCount = 0;
+    server.listen((request) async {
+      if (request.method == 'PROPFIND') {
+        request.response.statusCode = 207;
+        request.response.write(_listing(etag: 'W/"v1"', length: null));
+      } else {
+        getCount++;
+        request.response.write('song');
+      }
+      await request.response.close();
+    });
+
+    final files = await WebDavClient().scan(
+      settings,
+      const <SyncPath, BaselineEntry>{},
+      cache,
+      CancellationToken(),
+    );
+
+    expect(getCount, 1);
+    expect(files.files.single.size, 4);
+    expect(files.files.single.sha256, _hash('song'));
+  });
+
+  test(
+    'a dropped GET socket retries and hashes only the complete response',
+    () async {
+      var getCount = 0;
+      server.listen((request) async {
+        if (request.method == 'PROPFIND') {
+          request.response.statusCode = 207;
+          request.response.write(_listing(etag: '"v1"', length: 4));
+          await request.response.close();
+          return;
+        }
+        getCount++;
+        if (getCount == 1) {
+          final socket = await request.response.detachSocket();
+          socket.destroy();
+          return;
+        }
+        request.response.headers.set(HttpHeaders.etagHeader, '"v1"');
+        request.response.write('song');
+        await request.response.close();
+      });
+
+      final files = await WebDavClient().scan(
+        settings,
+        const <SyncPath, BaselineEntry>{},
+        cache,
+        CancellationToken(),
+      );
+
+      expect(getCount, 2);
+      expect(files.files.single.size, 4);
+      expect(files.files.single.sha256, _hash('song'));
+    },
+  );
+
+  test('cancelling a stalled GET body interrupts the scan promptly', () async {
+    final getStarted = Completer<void>();
+    server.listen((request) async {
+      if (request.method == 'PROPFIND') {
+        request.response.statusCode = 207;
+        request.response.write(_listing(etag: 'W/"v1"', length: 4));
+        await request.response.close();
+        return;
+      }
+      request.response.headers.set(HttpHeaders.etagHeader, 'W/"v1"');
+      await request.response.flush();
+      getStarted.complete();
+    });
+    final cancellation = CancellationToken();
+    final scan = WebDavClient().scan(
+      settings,
+      const <SyncPath, BaselineEntry>{},
+      cache,
+      cancellation,
+    );
+
+    await getStarted.future.timeout(const Duration(seconds: 3));
+    cancellation.cancel();
+    await expectLater(
+      scan.timeout(const Duration(seconds: 3)),
+      throwsA(isA<SyncCancelled>()),
+    );
+  });
+
+  test(
+    'strong ETag checkpoint reuses its size when the listing omits length',
+    () async {
+      var getCount = 0;
+      server.listen((request) async {
+        if (request.method == 'PROPFIND') {
+          request.response.statusCode = 207;
+          request.response.write(_listing(etag: '"v1"', length: null));
+        } else {
+          getCount++;
+          request.response.statusCode = HttpStatus.internalServerError;
+        }
+        await request.response.close();
+      });
+      final path = SyncPath.parse('song.mp3');
+      final state = SqliteStateStore(
+        '${cache.path}${Platform.pathSeparator}state.sqlite',
+      );
+      await state.open();
+      try {
+        state
+            .scanCheckpoint(reuse: false)
+            .recordRemote(path, sha256: _hash('song'), size: 4, etag: '"v1"');
+        final files = await WebDavClient().scan(
+          settings,
+          const <SyncPath, BaselineEntry>{},
+          cache,
+          CancellationToken(),
+          checkpoint: state.scanCheckpoint(reuse: true),
+        );
+
+        expect(getCount, 0);
+        expect(files.files.single.sha256, _hash('song'));
+        expect(files.files.single.size, 4);
+      } finally {
+        state.close();
+      }
     },
   );
 
@@ -239,7 +370,7 @@ String _folderMetadata(String href) =>
 </d:multistatus>
 ''';
 
-String _listing({required String etag, required int length}) =>
+String _listing({required String etag, required int? length}) =>
     '''
 <?xml version="1.0" encoding="utf-8"?>
 <d:multistatus xmlns:d="DAV:">
@@ -248,7 +379,7 @@ String _listing({required String etag, required int length}) =>
     <d:status>HTTP/1.1 200 OK</d:status>
   </d:propstat></d:response>
   <d:response><d:href>/dav/song.mp3</d:href><d:propstat>
-    <d:prop><d:resourcetype/><d:getcontentlength>$length</d:getcontentlength><d:getetag>$etag</d:getetag></d:prop>
+    <d:prop><d:resourcetype/>${length == null ? '' : '<d:getcontentlength>$length</d:getcontentlength>'}<d:getetag>$etag</d:getetag></d:prop>
     <d:status>HTTP/1.1 200 OK</d:status>
   </d:propstat></d:response>
 </d:multistatus>

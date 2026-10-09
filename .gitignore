@@ -4,6 +4,10 @@
 *.pyc
 *.swp
 .DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.bak
 .atom/
 .build/
 .buildlog/
@@ -20,6 +24,8 @@ migrate_working_dir/
 
 # Local editor configuration
 .vscode/
+.fleet/
+.zed/
 
 # Local environment and credentials
 /requirements.txt
@@ -40,6 +46,7 @@ keystore.properties
 
 # Build and release artifacts
 **/build/
+/app/
 /dist/
 *.apk
 *.aab
@@ -47,18 +54,16 @@ keystore.properties
 *.msix
 *.appx
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
-
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
+.packages
+.flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
+/.fvm/flutter_sdk
 /build/
 /coverage/
 

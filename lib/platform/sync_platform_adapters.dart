@@ -252,7 +252,13 @@ final class _ConfiguredLocalStore implements ConfigurableLocalStore {
     CancellationToken token, {
     SyncByteProgress? onBytes,
     SyncFileProgress? onFile,
-  }) => _store.scan(token, onBytes: onBytes, onFile: onFile);
+    ScanCheckpoint? checkpoint,
+  }) => _store.scan(
+    token,
+    onBytes: onBytes,
+    onFile: onFile,
+    checkpoint: checkpoint,
+  );
   @override
   Future<Stream<List<int>>> read(SyncPath path, CancellationToken token) =>
       _store.read(path, token);
@@ -408,83 +414,110 @@ final class _SafLocalStore implements LocalStore {
     CancellationToken token, {
     SyncByteProgress? onBytes,
     SyncFileProgress? onFile,
+    ScanCheckpoint? checkpoint,
   }) async {
-    token.throwIfCancelled();
-    final id = _randomId();
-    final removeCancel = token.listen(() {
-      unawaited(
-        channel.invokeMethod<void>('safCancelRequest', <String, Object?>{
-          ..._scope,
-          'requestId': id,
-        }),
+    final response = await _callCancellable(
+      'safScanList',
+      const <String, Object?>{},
+      token,
+    );
+    final raw = response['files'];
+    final rawOccupied = response['occupiedPaths'];
+    if (raw is! List) {
+      throw const SyncFailure('The SAF scanner returned an incomplete listing.');
+    }
+    if (rawOccupied is! List) {
+      throw const SyncFailure(
+        'The SAF scanner did not return filesystem path occupancy.',
       );
-    });
-    try {
-      final response = await _call('safScan', <String, Object?>{
-        'requestId': id,
-      });
-      final raw = response['files'];
-      final rawOccupied = response['occupiedPaths'];
-      if (raw is! List) {
-        throw const SyncFailure(
-          'The SAF scanner returned an incomplete listing.',
+    }
+    final occupiedPaths = <SyncOccupiedPath>[];
+    for (final entry in rawOccupied) {
+      if (entry is! Map) {
+        throw const SyncFailure('The SAF scanner returned an invalid path.');
+      }
+      final map = Map<String, Object?>.from(entry.cast<String, Object?>());
+      final path = SyncPath.parse(map['path'] as String);
+      final directory = map['isDirectory'];
+      if (directory is! bool) {
+        throw SyncFailure('The SAF scanner returned an invalid path.', path: path);
+      }
+      occupiedPaths.add(SyncOccupiedPath(path: path.value, isDirectory: directory));
+    }
+    final sha256Pattern = RegExp(r'^[0-9a-f]{64}$');
+    final files = <SyncFile>[];
+    for (final entry in raw) {
+      token.throwIfCancelled();
+      if (entry is! Map) {
+        throw const SyncFailure('The SAF scanner returned an invalid file record.');
+      }
+      final map = Map<String, Object?>.from(entry.cast<String, Object?>());
+      final path = SyncPath.parse(map['path'] as String);
+      final documentId = map['documentId'];
+      final listedSize = map['size'];
+      final listedModified = map['modifiedMs'];
+      if (!path.isMusic ||
+          documentId is! String ||
+          documentId.isEmpty ||
+          listedSize is! num ||
+          listedModified is! num) {
+        throw SyncFailure(
+          'The SAF scanner returned invalid music metadata.',
+          path: path,
         );
       }
-      final files = <SyncFile>[];
-      if (rawOccupied is! List) {
-        throw const SyncFailure(
-          'The SAF scanner did not return filesystem path occupancy.',
-        );
-      }
-      final occupiedPaths = <SyncOccupiedPath>[];
-      for (final entry in rawOccupied) {
-        if (entry is! Map) {
-          throw const SyncFailure('The SAF scanner returned an invalid path.');
-        }
-        final map = Map<String, Object?>.from(entry.cast<String, Object?>());
-        final path = SyncPath.parse(map['path'] as String);
-        final directory = map['isDirectory'];
-        if (directory is! bool) {
-          throw SyncFailure(
-            'The SAF scanner returned an invalid path.',
-            path: path,
-          );
-        }
-        occupiedPaths.add(
-          SyncOccupiedPath(path: path.value, isDirectory: directory),
-        );
-      }
-      for (final entry in raw) {
-        token.throwIfCancelled();
-        if (entry is! Map) {
-          throw const SyncFailure(
-            'The SAF scanner returned an invalid file record.',
-          );
-        }
-        final map = Map<String, Object?>.from(entry.cast<String, Object?>());
-        final path = SyncPath.parse(map['path'] as String);
-        final hash = map['sha256'] as String;
-        if (!path.isMusic || !RegExp(r'^[0-9a-f]{64}$').hasMatch(hash)) {
-          throw SyncFailure(
-            'The SAF scanner returned invalid music content metadata.',
-            path: path,
-          );
-        }
-        await onFile?.call(path);
-        await onBytes?.call(path, (map['size'] as num).toInt());
+      await onFile?.call(path);
+      final reused = checkpoint?.localHash(
+        path,
+        size: listedSize.toInt(),
+        modifiedMs: listedModified.toInt(),
+      );
+      if (reused != null) {
         files.add(
           SyncFile(
             path: path,
-            sha256: hash,
-            size: (map['size'] as num).toInt(),
-            modifiedMs: (map['modifiedMs'] as num?)?.toInt() ?? 0,
+            sha256: reused,
+            size: listedSize.toInt(),
+            modifiedMs: listedModified.toInt(),
           ),
         );
+        continue;
       }
-      return SyncScanResult(files: files, occupiedPaths: occupiedPaths);
-    } finally {
-      removeCancel();
+      final hashed = await _callCancellable('safHashDocument', <String, Object?>{
+        'path': path.value,
+        'documentId': documentId,
+      }, token);
+      final hash = hashed['sha256'];
+      final size = hashed['size'];
+      final modifiedMs = hashed['modifiedMs'];
+      if (hash is! String ||
+          !sha256Pattern.hasMatch(hash) ||
+          size is! num ||
+          modifiedMs is! num) {
+        throw SyncFailure(
+          'The SAF scanner returned invalid music content metadata.',
+          path: path,
+        );
+      }
+      await onBytes?.call(path, size.toInt());
+      if (hashed['stable'] == true) {
+        checkpoint?.recordLocal(
+          path,
+          sha256: hash,
+          size: size.toInt(),
+          modifiedMs: modifiedMs.toInt(),
+        );
+      }
+      files.add(
+        SyncFile(
+          path: path,
+          sha256: hash,
+          size: size.toInt(),
+          modifiedMs: modifiedMs.toInt(),
+        ),
+      );
     }
+    return SyncScanResult(files: files, occupiedPaths: occupiedPaths);
   }
 
   @override

@@ -385,7 +385,8 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
     private fun handleSaf(call: MethodCall, cancellation: AtomicBoolean?): Any? {
         val scope = scope(call)
         return when (call.method) {
-            "safScan" -> scan(scope, requiredString(call, "requestId"), cancellation!!)
+            "safScanList" -> scanList(scope, cancellation!!)
+            "safHashDocument" -> hashListedDocument(scope, call, cancellation!!)
             "safListMusic" -> listMusic(scope)
             "safDeleteMusic" -> deleteMusic(scope, call)
             "safStat" -> {
@@ -446,8 +447,8 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
         return 0
     }
 
-    private fun scan(scope: RootScope, requestId: String, cancelled: AtomicBoolean): Map<String, Any?> {
-        val results = ArrayList<Map<String, Any?>>()
+    private fun scanList(scope: RootScope, cancelled: AtomicBoolean): Map<String, Any?> {
+        val files = ArrayList<Map<String, Any?>>()
         val occupiedPaths = ArrayList<Map<String, Any?>>()
         val root = rootDocument(scope)
         val pending = ArrayDeque<Pair<DocumentRef, String>>()
@@ -467,14 +468,34 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
                 if (child.mime == DIR) {
                     pending.add(child to path)
                 } else if (child.name.substringAfterLast('.', "").lowercase() in MUSIC_EXTENSIONS) {
-                    val (hash, length) = hashDocument(child, cancelled)
-                    results.add(mapOf("path" to path, "sha256" to hash,
-                        "size" to length, "modifiedMs" to child.modifiedMs))
+                    files.add(mapOf("path" to path, "documentId" to child.id,
+                        "size" to child.size, "modifiedMs" to child.modifiedMs))
                 }
             }
         }
-        return mapOf("requestId" to requestId, "files" to results,
-            "occupiedPaths" to occupiedPaths)
+        return mapOf("files" to files, "occupiedPaths" to occupiedPaths)
+    }
+
+    /**
+     * Hashes one file returned by [scanList]. Metadata is read before and after
+     * the content so the caller only checkpoints a hash whose file did not
+     * change while it was being read.
+     */
+    private fun hashListedDocument(scope: RootScope, call: MethodCall, cancelled: AtomicBoolean): Map<String, Any?> {
+        val path = requiredString(call, "path")
+        val parts = normalizedSegments(path)
+        val documentId = requiredString(call, "documentId")
+        val uri = DocumentsContract.buildDocumentUriUsingTree(scope.tree, documentId)
+        val before = readDocument(uri)
+        if (before.mime == DIR || before.name != parts.last()) {
+            throw IllegalStateException("A listed music file changed before it could be read.")
+        }
+        val (hash, length) = hashDocument(before, cancelled)
+        val after = readDocument(uri)
+        val stable = after.name == before.name && after.size == before.size &&
+            after.modifiedMs == before.modifiedMs && (before.size < 0 || before.size == length)
+        return mapOf("sha256" to hash, "size" to length,
+            "modifiedMs" to before.modifiedMs, "stable" to stable)
     }
 
     private fun listMusic(scope: RootScope): Map<String, Any> {

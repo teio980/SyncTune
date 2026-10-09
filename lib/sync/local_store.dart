@@ -20,6 +20,7 @@ abstract interface class LocalStore {
     CancellationToken token, {
     SyncByteProgress? onBytes,
     SyncFileProgress? onFile,
+    ScanCheckpoint? checkpoint,
   });
   Future<Stream<List<int>>> read(SyncPath path, CancellationToken token);
   Future<String?> hash(SyncPath path, CancellationToken token);
@@ -193,6 +194,7 @@ final class FileLocalStore implements LocalStore {
     CancellationToken token, {
     SyncByteProgress? onBytes,
     SyncFileProgress? onFile,
+    ScanCheckpoint? checkpoint,
   }) async {
     if (await isReparsePoint?.call(root.path) == true) {
       throw const SyncFailure(
@@ -261,6 +263,23 @@ final class FileLocalStore implements LocalStore {
         folded[key] = relative;
         final file = File(entity.path);
         final stat = await file.stat();
+        final modifiedMs = stat.modified.millisecondsSinceEpoch;
+        final reused = checkpoint?.localHash(
+          path,
+          size: stat.size,
+          modifiedMs: modifiedMs,
+        );
+        if (reused != null) {
+          files.add(
+            SyncFile(
+              path: path,
+              sha256: reused,
+              size: stat.size,
+              modifiedMs: modifiedMs,
+            ),
+          );
+          continue;
+        }
         final digest = await _hashStream(
           file.openRead(),
           token,
@@ -270,12 +289,25 @@ final class FileLocalStore implements LocalStore {
                   await onBytes(path, bytes);
                 },
         );
+        if (checkpoint != null) {
+          final after = await file.stat();
+          if (after.size == digest.length &&
+              after.size == stat.size &&
+              after.modified.millisecondsSinceEpoch == modifiedMs) {
+            checkpoint.recordLocal(
+              path,
+              sha256: digest.sha256,
+              size: digest.length,
+              modifiedMs: modifiedMs,
+            );
+          }
+        }
         files.add(
           SyncFile(
             path: path,
             sha256: digest.sha256,
             size: digest.length,
-            modifiedMs: stat.modified.millisecondsSinceEpoch,
+            modifiedMs: modifiedMs,
           ),
         );
       }

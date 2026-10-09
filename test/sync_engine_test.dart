@@ -35,6 +35,104 @@ void main() {
   });
 
   test(
+    'local checkpoints resume scans while verification always rereads files',
+    () async {
+      final state = SqliteStateStore(
+        '${directory.path}${Platform.pathSeparator}local-checkpoint.sqlite',
+      );
+      await state.open();
+      addTearDown(state.close);
+      final store = FileLocalStore(settings.localRoot);
+      final file = File(
+        '${settings.localRoot}${Platform.pathSeparator}song.mp3',
+      );
+      await file.writeAsString('first content');
+      var bytesRead = 0;
+
+      final first = await store.scan(
+        CancellationToken(),
+        checkpoint: state.scanCheckpoint(reuse: false),
+        onBytes: (_, bytes) => bytesRead += bytes,
+      );
+      expect(
+        first.files.single.sha256,
+        hashBytes(utf8.encode('first content')),
+      );
+      expect(bytesRead, greaterThan(0));
+      expect(state.scanCheckpointCount(), 1);
+
+      bytesRead = 0;
+      final resumed = await store.scan(
+        CancellationToken(),
+        checkpoint: state.scanCheckpoint(reuse: true),
+        onBytes: (_, bytes) => bytesRead += bytes,
+      );
+      expect(resumed.files.single.sha256, first.files.single.sha256);
+      expect(bytesRead, 0);
+
+      await file.writeAsString('changed content with a different size');
+      bytesRead = 0;
+      final changed = await store.scan(
+        CancellationToken(),
+        checkpoint: state.scanCheckpoint(reuse: true),
+        onBytes: (_, bytes) => bytesRead += bytes,
+      );
+      expect(
+        changed.files.single.sha256,
+        hashBytes(utf8.encode('changed content with a different size')),
+      );
+      expect(bytesRead, greaterThan(0));
+
+      bytesRead = 0;
+      final verified = await store.scan(
+        CancellationToken(),
+        checkpoint: state.scanCheckpoint(reuse: false),
+        onBytes: (_, bytes) => bytesRead += bytes,
+      );
+      expect(verified.files.single.sha256, changed.files.single.sha256);
+      expect(bytesRead, greaterThan(0));
+    },
+  );
+
+  test('remote scan resumes after a process restart', () async {
+    server.set('first.mp3', utf8.encode('first cloud song'));
+    server.set('later/song.mp3', utf8.encode('later cloud song'));
+    server.rejectListingPath = '/dav/later';
+    final state = SqliteStateStore(
+      '${directory.path}${Platform.pathSeparator}remote-checkpoint.sqlite',
+    );
+    await state.open();
+    addTearDown(state.close);
+    final engine = SyncEngine(
+      localStore: FileLocalStore(settings.localRoot),
+      webDav: WebDavClient(),
+      stateStore: state,
+    );
+
+    await expectLater(_run(engine, settings), throwsA(isA<SyncFailure>()));
+    expect(server.getCount('first.mp3'), 1);
+    expect(state.scanCheckpointCount(), 1);
+
+    // Closing and reopening the database simulates a process restart between
+    // the interrupted scan and its retry.
+    state.close();
+    await state.open();
+    server.rejectListingPath = null;
+    await _run(engine, settings);
+
+    // One GET was needed for the interrupted scan, and one for mandatory
+    // whole-tree verification. The resumed comparison scan reuses its hash.
+    expect(server.getCount('first.mp3'), 2);
+    expect(server.getCount('later/song.mp3'), 2);
+    expect(state.scanCheckpointCount(), 0);
+    expect(
+      await File('${settings.localRoot}${Platform.pathSeparator}first.mp3')
+          .readAsString(),
+      'first cloud song',
+    );
+  });
+
+  test(
     'concurrent edits retain both versions at matching relative paths',
     () async {
       final path = File(
@@ -491,7 +589,13 @@ final class _CrashAfterCommitOnce implements LocalStore {
     CancellationToken token, {
     SyncByteProgress? onBytes,
     SyncFileProgress? onFile,
-  }) => delegate.scan(token, onBytes: onBytes, onFile: onFile);
+    ScanCheckpoint? checkpoint,
+  }) => delegate.scan(
+    token,
+    onBytes: onBytes,
+    onFile: onFile,
+    checkpoint: checkpoint,
+  );
   @override
   Future<Stream<List<int>>> read(SyncPath path, CancellationToken token) =>
       delegate.read(path, token);
@@ -572,6 +676,8 @@ final class MemoryWebDav {
   final Map<String, List<int>> _files = <String, List<int>>{};
   final Map<String, int> _fileVersions = <String, int>{};
   final Set<String> _directories = <String>{'/dav'};
+  final Map<String, int> _getRequests = <String, int>{};
+  String? rejectListingPath;
   List<int>? replaceBeforeConditionalPut;
   List<int>? replaceBeforeConditionalGet;
   List<int>? replaceBeforeConditionalDelete;
@@ -610,18 +716,25 @@ final class MemoryWebDav {
   void set(String relative, List<int> bytes) {
     _revision++;
     final path = '/dav/$relative';
+    final segments = relative.split('/');
+    for (var index = 1; index < segments.length; index++) {
+      _directories.add('/dav/${segments.take(index).join('/')}');
+    }
     _files[path] = List<int>.of(bytes);
     _fileVersions[path] = _revision;
   }
 
   List<int>? read(String relative) => _files['/dav/$relative'];
+  int getCount(String relative) => _getRequests['/dav/$relative'] ?? 0;
 
   Future<void> close() => _server.close(force: true);
 
   Future<void> _handle(HttpRequest request) async {
     final path = _normalize('/${request.uri.pathSegments.join('/')}');
     final depth = request.headers.value('depth');
-    if (request.method == 'MKCOL') {
+    if (request.method == 'PROPFIND' && path == rejectListingPath) {
+      request.response.statusCode = HttpStatus.internalServerError;
+    } else if (request.method == 'MKCOL') {
       if (_directories.contains(path)) {
         request.response.statusCode = HttpStatus.methodNotAllowed;
       } else if (!_directories.contains(_parent(path))) {
@@ -645,6 +758,7 @@ final class MemoryWebDav {
         request.response.statusCode = HttpStatus.notFound;
       }
     } else if (request.method == 'GET') {
+      _getRequests[path] = (_getRequests[path] ?? 0) + 1;
       final ifMatch = request.headers.value(HttpHeaders.ifMatchHeader);
       final body = _files[path];
       final raceReplacement = replaceBeforeConditionalGet;

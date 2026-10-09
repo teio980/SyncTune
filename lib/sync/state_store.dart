@@ -55,6 +55,15 @@ final class SqliteStateStore {
       needs_rescan INTEGER NOT NULL DEFAULT 0,
       created_at_ms INTEGER NOT NULL
     )''');
+    db.execute('''CREATE TABLE IF NOT EXISTS scan_checkpoint (
+      side TEXT NOT NULL CHECK (side IN ('local','remote')),
+      relative_path TEXT NOT NULL,
+      sha256 TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      modified_ms INTEGER NOT NULL,
+      etag TEXT,
+      PRIMARY KEY (side, relative_path)
+    )''');
     _database = db;
   }
 
@@ -67,6 +76,14 @@ final class SqliteStateStore {
         'local_modified_ms',
         'remote_etag',
         'remote_size',
+      },
+      'scan_checkpoint': <String>{
+        'side',
+        'relative_path',
+        'sha256',
+        'size',
+        'modified_ms',
+        'etag',
       },
       'pending_operations': <String>{
         'operation_id',
@@ -138,6 +155,7 @@ final class SqliteStateStore {
         );
       }
       _db.execute('DELETE FROM baseline');
+      _db.execute('DELETE FROM scan_checkpoint');
       _db.execute(
         'INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
         <Object?>['sync_identity', identity],
@@ -164,7 +182,10 @@ final class SqliteStateStore {
           'Finish recovery for the previous configuration before changing the sync folder or account.',
         );
       }
-      if (identityChanged) _db.execute('DELETE FROM baseline');
+      if (identityChanged) {
+        _db.execute('DELETE FROM baseline');
+        _db.execute('DELETE FROM scan_checkpoint');
+      }
       for (final entry in values.entries) {
         _db.execute(
           'INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
@@ -177,6 +198,17 @@ final class SqliteStateStore {
       rethrow;
     }
   }
+
+  /// Opens the persisted scan checkpoint. With [reuse] false, hashes are only
+  /// recorded; the caller reads every file itself.
+  ScanCheckpoint scanCheckpoint({required bool reuse}) =>
+      _SqliteScanCheckpoint(this, reuse: reuse);
+
+  void clearScanCheckpoint() => _db.execute('DELETE FROM scan_checkpoint');
+
+  int scanCheckpointCount() =>
+      _db.select('SELECT COUNT(*) AS n FROM scan_checkpoint').single['n']
+          as int;
 
   Map<SyncPath, BaselineEntry> loadBaseline() {
     final result = <SyncPath, BaselineEntry>{};
@@ -414,5 +446,109 @@ extension<T> on Iterable<T> {
   T? get firstOrNull {
     final iterator = this.iterator;
     return iterator.moveNext() ? iterator.current : null;
+  }
+}
+
+typedef _CheckpointRow = ({
+  String sha256,
+  int size,
+  int modifiedMs,
+  String? etag,
+});
+
+final class _SqliteScanCheckpoint implements ScanCheckpoint {
+  _SqliteScanCheckpoint(this._store, {required bool reuse})
+    : _local = reuse ? _load(_store, 'local') : const {},
+      _remote = reuse ? _load(_store, 'remote') : const {};
+
+  final SqliteStateStore _store;
+  final Map<String, _CheckpointRow> _local;
+  final Map<String, _CheckpointRow> _remote;
+
+  static final _sha256 = RegExp(r'^[0-9a-f]{64}$');
+
+  static Map<String, _CheckpointRow> _load(
+    SqliteStateStore store,
+    String side,
+  ) {
+    return <String, _CheckpointRow>{
+      for (final row in store._db.select(
+        'SELECT relative_path,sha256,size,modified_ms,etag FROM scan_checkpoint WHERE side=?',
+        <Object?>[side],
+      ))
+        row['relative_path'] as String: (
+          sha256: row['sha256'] as String,
+          size: row['size'] as int,
+          modifiedMs: row['modified_ms'] as int,
+          etag: row['etag'] as String?,
+        ),
+    };
+  }
+
+  @override
+  String? localHash(
+    SyncPath path, {
+    required int size,
+    required int modifiedMs,
+  }) {
+    // Without a real modification time, size alone cannot identify content.
+    if (size < 0 || modifiedMs <= 0) return null;
+    final row = _local[path.value];
+    if (row == null || row.size != size || row.modifiedMs != modifiedMs) {
+      return null;
+    }
+    return _sha256.hasMatch(row.sha256) ? row.sha256 : null;
+  }
+
+  @override
+  ({String sha256, int size})? remoteFile(
+    SyncPath path, {
+    required String etag,
+    int? size,
+  }) {
+    final row = _remote[path.value];
+    if (row == null || row.etag == null || row.etag != etag) return null;
+    if (size != null && row.size != size) return null;
+    if (!_sha256.hasMatch(row.sha256) || row.size < 0) return null;
+    return (sha256: row.sha256, size: row.size);
+  }
+
+  @override
+  void recordLocal(
+    SyncPath path, {
+    required String sha256,
+    required int size,
+    required int modifiedMs,
+  }) {
+    if (size < 0 || modifiedMs <= 0) return;
+    _write('local', path, sha256, size, modifiedMs, null);
+  }
+
+  @override
+  void recordRemote(
+    SyncPath path, {
+    required String sha256,
+    required int size,
+    required String etag,
+  }) {
+    _write('remote', path, sha256, size, 0, etag);
+  }
+
+  void _write(
+    String side,
+    SyncPath path,
+    String sha256,
+    int size,
+    int modifiedMs,
+    String? etag,
+  ) {
+    if (!_sha256.hasMatch(sha256)) return;
+    _store._db.execute(
+      '''INSERT INTO scan_checkpoint(side,relative_path,sha256,size,modified_ms,etag)
+      VALUES(?,?,?,?,?,?) ON CONFLICT(side,relative_path) DO UPDATE SET
+      sha256=excluded.sha256,size=excluded.size,
+      modified_ms=excluded.modified_ms,etag=excluded.etag''',
+      <Object?>[side, path.value, sha256, size, modifiedMs, etag],
+    );
   }
 }

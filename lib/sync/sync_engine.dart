@@ -163,10 +163,12 @@ final class SyncEngine {
         );
       }
 
+      final checkpoint = stateStore.scanCheckpoint(reuse: true);
       final localScan = await localStore.scan(
         cancellation,
         onBytes: scanByte,
         onFile: scanFile,
+        checkpoint: checkpoint,
       );
       cancellation.throwIfCancelled();
       await webDav.ensureRoot(settings, cancellation);
@@ -177,6 +179,7 @@ final class SyncEngine {
         cancellation,
         onMusicFile: scanFile,
         onBytes: scanByte,
+        checkpoint: checkpoint,
       );
       cancellation.throwIfCancelled();
 
@@ -278,6 +281,7 @@ final class SyncEngine {
         report,
       );
       cancellation.throwIfCancelled();
+      stateStore.clearScanCheckpoint();
       await report(
         progress.copyWith(
           phase: SyncPhase.complete,
@@ -864,10 +868,12 @@ final class SyncEngine {
       );
     }
 
+    final checkpoint = stateStore.scanCheckpoint(reuse: false);
     final localScan = await localStore.scan(
       cancellation,
       onBytes: scanByte,
       onFile: scanFile,
+      checkpoint: checkpoint,
     );
     cancellation.throwIfCancelled();
     final remoteScan = await webDav.scan(
@@ -877,6 +883,7 @@ final class SyncEngine {
       cancellation,
       onMusicFile: scanFile,
       onBytes: scanByte,
+      checkpoint: checkpoint,
     );
     cancellation.throwIfCancelled();
     final local = indexFiles(localScan.files, windowsCaseSensitive: false);
