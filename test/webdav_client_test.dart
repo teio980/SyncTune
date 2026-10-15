@@ -357,6 +357,57 @@ void main() {
     );
     expect(requests, 1);
   });
+
+  test(
+    'DELETE retries with If-Match when tagged If header receives 412 on unchanged target',
+    () async {
+      var deleteCount = 0;
+      var propfindCount = 0;
+      final ifHeaders = <String?>[];
+      final ifMatchHeaders = <String?>[];
+      server.listen((request) async {
+        if (request.method == 'PROPFIND') {
+          propfindCount++;
+          if (deleteCount > 0 && propfindCount > 2) {
+            // Confirmation PROPFIND after deletion returns 404
+            request.response.statusCode = 404;
+          } else {
+            request.response.statusCode = 207;
+            request.response.write(_fileMetadata(etag: '"v1"', length: 4));
+          }
+        } else if (request.method == 'GET') {
+          request.response.headers.set(HttpHeaders.etagHeader, '"v1"');
+          request.response.write('song');
+        } else if (request.method == 'DELETE') {
+          deleteCount++;
+          ifHeaders.add(request.headers.value('if'));
+          ifMatchHeaders.add(request.headers.value('if-match'));
+          if (deleteCount == 1) {
+            // First DELETE with tagged If header is rejected by server with 412 (like Koofr)
+            request.response.statusCode = 412;
+          } else {
+            // Second DELETE with If-Match succeeds
+            request.response.statusCode = 204;
+          }
+        }
+        await request.response.close();
+      });
+
+      final backupPath = '${cache.path}${Platform.pathSeparator}song.backup';
+      await WebDavClient().delete(
+        settings,
+        SyncPath.parse('song.mp3'),
+        _hash('song'),
+        '"v1"',
+        backupPath,
+        CancellationToken(),
+      );
+
+      expect(deleteCount, 2);
+      expect(ifHeaders.first, '<${settings.serverUrl}/song.mp3> (["v1"])');
+      expect(ifMatchHeaders.last, '"v1"');
+    },
+  );
 }
 
 String _folderMetadata(String href) =>

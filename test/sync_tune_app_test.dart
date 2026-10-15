@@ -115,6 +115,33 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('force reset button stops a run waiting for credentials', (
+    tester,
+  ) async {
+    final secret = Completer<String>();
+    final harness = await mountApp(tester, credentialRead: secret.future);
+    addTearDown(() => unmountApp(tester, harness));
+    await tester.tap(find.byIcon(Icons.sync));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Start sync'));
+    await tester.pump();
+    expect(harness.controller.isRunning, isTrue);
+    expect(find.text('Preparing sync'), findsOneWidget);
+    await tester.tap(find.text('Force stop and reset'));
+    await tester.runAsync(() => harness.controller.cancelAndWait());
+    await tester.pumpAndSettle();
+    expect(harness.controller.isRunning, isFalse);
+    expect(find.text('Ready for a fresh sync'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Start sync'))
+          .onPressed,
+      isNotNull,
+    );
+    secret.complete('late password');
+    await tester.pump();
+  });
+
   testWidgets(
     'music navigation, full legacy URL, password visibility and read-only connection test',
     (tester) async {

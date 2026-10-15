@@ -424,7 +424,9 @@ final class _SafLocalStore implements LocalStore {
     final raw = response['files'];
     final rawOccupied = response['occupiedPaths'];
     if (raw is! List) {
-      throw const SyncFailure('The SAF scanner returned an incomplete listing.');
+      throw const SyncFailure(
+        'The SAF scanner returned an incomplete listing.',
+      );
     }
     if (rawOccupied is! List) {
       throw const SyncFailure(
@@ -440,16 +442,23 @@ final class _SafLocalStore implements LocalStore {
       final path = SyncPath.parse(map['path'] as String);
       final directory = map['isDirectory'];
       if (directory is! bool) {
-        throw SyncFailure('The SAF scanner returned an invalid path.', path: path);
+        throw SyncFailure(
+          'The SAF scanner returned an invalid path.',
+          path: path,
+        );
       }
-      occupiedPaths.add(SyncOccupiedPath(path: path.value, isDirectory: directory));
+      occupiedPaths.add(
+        SyncOccupiedPath(path: path.value, isDirectory: directory),
+      );
     }
     final sha256Pattern = RegExp(r'^[0-9a-f]{64}$');
     final files = <SyncFile>[];
     for (final entry in raw) {
       token.throwIfCancelled();
       if (entry is! Map) {
-        throw const SyncFailure('The SAF scanner returned an invalid file record.');
+        throw const SyncFailure(
+          'The SAF scanner returned an invalid file record.',
+        );
       }
       final map = Map<String, Object?>.from(entry.cast<String, Object?>());
       final path = SyncPath.parse(map['path'] as String);
@@ -483,10 +492,11 @@ final class _SafLocalStore implements LocalStore {
         );
         continue;
       }
-      final hashed = await _callCancellable('safHashDocument', <String, Object?>{
-        'path': path.value,
-        'documentId': documentId,
-      }, token);
+      final hashed = await _callCancellable(
+        'safHashDocument',
+        <String, Object?>{'path': path.value, 'documentId': documentId},
+        token,
+      );
       final hash = hashed['sha256'];
       final size = hashed['size'];
       final modifiedMs = hashed['modifiedMs'];

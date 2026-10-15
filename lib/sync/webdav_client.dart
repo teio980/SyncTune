@@ -1036,14 +1036,53 @@ final class WebDavClient {
         if (await checked.file.exists()) await checked.file.delete();
       }
     }
-    final response = await _request<List<int>>(
-      settings,
-      'DELETE',
-      _uri(settings, path),
-      token,
-      headers: _mutationCondition(settings, path, etag),
-      conditionalMutation: true,
-    );
+    Response<List<int>> response;
+    try {
+      response = await _request<List<int>>(
+        settings,
+        'DELETE',
+        _uri(settings, path),
+        token,
+        headers: _mutationCondition(settings, path, etag),
+        conditionalMutation: true,
+      );
+    } on SyncFailure catch (error) {
+      if (error.statusCode != HttpStatus.preconditionFailed) rethrow;
+      final recheck = await _metadata(settings, path, token);
+      if (recheck == null) {
+        return;
+      }
+      if (recheck.etag != etag) {
+        rethrow;
+      }
+      try {
+        response = await _request<List<int>>(
+          settings,
+          'DELETE',
+          _uri(settings, path),
+          token,
+          headers: <String, String>{
+            if (_isStrongEtag(etag)) HttpHeaders.ifMatchHeader: etag!,
+            HttpHeaders.cacheControlHeader: 'no-cache',
+            HttpHeaders.pragmaHeader: 'no-cache',
+          },
+          conditionalMutation: false,
+        );
+      } on SyncFailure catch (retryError) {
+        if (retryError.statusCode != HttpStatus.preconditionFailed) rethrow;
+        response = await _request<List<int>>(
+          settings,
+          'DELETE',
+          _uri(settings, path),
+          token,
+          headers: const <String, String>{
+            HttpHeaders.cacheControlHeader: 'no-cache',
+            HttpHeaders.pragmaHeader: 'no-cache',
+          },
+          conditionalMutation: false,
+        );
+      }
+    }
     _requireSuccess(response.statusCode, 'Delete WebDAV file');
     if (await _metadata(settings, path, token) != null) {
       throw SyncFailure(

@@ -206,6 +206,22 @@ final class SqliteStateStore {
 
   void clearScanCheckpoint() => _db.execute('DELETE FROM scan_checkpoint');
 
+  /// Abandons the previous run without touching either music folder or settings.
+  /// Reset the baseline too: a target missing after an interrupted commit must
+  /// be treated as a fresh copy, rather than a deletion to propagate.
+  void resetForFreshSync() {
+    _db.execute('BEGIN IMMEDIATE');
+    try {
+      _db.execute('DELETE FROM pending_operations');
+      _db.execute('DELETE FROM scan_checkpoint');
+      _db.execute('DELETE FROM baseline');
+      _db.execute('COMMIT');
+    } catch (_) {
+      _db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   int scanCheckpointCount() =>
       _db.select('SELECT COUNT(*) AS n FROM scan_checkpoint').single['n']
           as int;

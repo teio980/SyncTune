@@ -297,6 +297,84 @@ void main() {
     );
   });
 
+  test('reset abandons recovery and copies back a missing target', () async {
+    final state = SqliteStateStore(
+      '${directory.path}${Platform.pathSeparator}reset.sqlite',
+    );
+    await state.open();
+    addTearDown(state.close);
+    final store = FileLocalStore(settings.localRoot);
+    final engine = SyncEngine(
+      localStore: store,
+      webDav: WebDavClient(),
+      stateStore: state,
+    );
+    server.set('song.mp3', utf8.encode('shared song'));
+    await _run(engine, settings);
+    expect(state.loadBaseline(), isNotEmpty);
+
+    // Model a commit interrupted after moving the target into its backup.
+    const id = '12345678-1234-1234-1234-123456789abc';
+    final path = SyncPath.parse('song.mp3');
+    final backup = File(
+      '${settings.localRoot}${Platform.pathSeparator}.synctune-local-v2/sync'
+      '${Platform.pathSeparator}$id.backup',
+    );
+    await backup.parent.create(recursive: true);
+    await File('${settings.localRoot}${Platform.pathSeparator}song.mp3')
+        .rename(backup.path);
+    state.begin(
+      PendingOperation(
+        id: id,
+        path: path,
+        kind: 'write',
+        expectedLocalHash: hashBytes(utf8.encode('outdated pending content')),
+        expectedRemoteHash: hashBytes(utf8.encode('outdated pending content')),
+        expectedSize: 24,
+        previousLocalHash: hashBytes(utf8.encode('shared song')),
+        previousRemoteHash: hashBytes(utf8.encode('shared song')),
+        previousRemoteEtag: null,
+        sourcePath: path,
+        sourceSide: 'remote',
+        localStage: id,
+        localBackup: id,
+        remoteBackup: null,
+      ),
+    );
+    state
+        .scanCheckpoint(reuse: false)
+        .recordRemote(
+          path,
+          sha256: hashBytes(utf8.encode('cached song')),
+          size: 11,
+          etag: '"old"',
+        );
+
+    await engine.resetForFreshSync();
+    state.close();
+    await state.open();
+    expect(state.loadPending(), isEmpty);
+    expect(state.scanCheckpointCount(), 0);
+    expect(state.loadBaseline(), isEmpty);
+    final progress = <SyncProgress>[];
+    await engine.run(
+      settings,
+      secret: 'test-secret',
+      cancellation: CancellationToken(),
+      onProgress: progress.add,
+    );
+    expect(progress.first.phase, SyncPhase.preparing);
+    expect(progress.any((item) => item.phase == SyncPhase.recovering), isFalse);
+    expect(progress.last.phase, SyncPhase.complete);
+    expect(
+      await File('${settings.localRoot}${Platform.pathSeparator}song.mp3')
+          .readAsString(),
+      'shared song',
+    );
+    expect(await backup.readAsString(), 'shared song');
+    expect(state.loadBaseline().keys, <SyncPath>[path]);
+  });
+
   test(
     'a one-sided local edit replaces the cloud file using its scanned ETag',
     () async {

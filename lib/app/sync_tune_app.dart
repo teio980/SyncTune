@@ -496,7 +496,10 @@ final class _SyncHome extends StatelessWidget {
       final progress = controller.progress;
       final running = controller.isRunning;
       final status = switch (progress.phase) {
-        SyncPhase.idle => 'Ready',
+        SyncPhase.idle =>
+          controller.freshStartReady ? 'Ready for a fresh sync' : 'Ready',
+        SyncPhase.preparing => 'Preparing sync',
+        SyncPhase.stopping => 'Stopping and resetting sync…',
         SyncPhase.recovering => 'Recovering previous work',
         SyncPhase.scanning => 'Scanning files',
         SyncPhase.comparing => 'Comparing files',
@@ -564,7 +567,11 @@ final class _SyncHome extends StatelessWidget {
                         label: const LocalizedText('Start sync'),
                       ),
                       OutlinedButton.icon(
-                        onPressed: running ? controller.cancel : onSettings,
+                        onPressed: controller.configurationWriteInProgress
+                            ? null
+                            : running
+                            ? controller.cancel
+                            : onSettings,
                         icon: Icon(
                           running ? Icons.cancel_outlined : Icons.settings,
                         ),
@@ -572,7 +579,20 @@ final class _SyncHome extends StatelessWidget {
                           running ? 'Cancel sync' : 'Open settings',
                         ),
                       ),
+                      OutlinedButton.icon(
+                        onPressed:
+                            settings == null ||
+                                controller.configurationWriteInProgress
+                            ? null
+                            : controller.forceStopAndReset,
+                        icon: const Icon(Icons.restart_alt),
+                        label: const LocalizedText('Force stop and reset'),
+                      ),
                     ],
+                  ),
+                  const SizedBox(height: 12),
+                  const LocalizedText(
+                    'Force stop clears sync history. Next sync scans both folders from scratch. Music and recovery copies are kept.',
                   ),
                 ],
               ),
@@ -661,6 +681,8 @@ final class SyncProgressSummary extends StatelessWidget {
             ),
           );
         }
+      case SyncPhase.preparing:
+      case SyncPhase.stopping:
       case SyncPhase.recovering:
       case SyncPhase.saving:
       case SyncPhase.idle:

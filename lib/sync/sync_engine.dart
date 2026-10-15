@@ -28,6 +28,16 @@ final class SyncEngine {
   final SyncPlanner _planner = const SyncPlanner();
   bool _running = false;
 
+  Future<void> resetForFreshSync() async {
+    if (_running) {
+      throw const SyncFailure(
+        'Stop synchronization before resetting its state.',
+      );
+    }
+    await stateStore.open();
+    stateStore.resetForFreshSync();
+  }
+
   Future<void> testConnection(
     SyncSettings settings, {
     required String secret,
@@ -44,7 +54,7 @@ final class SyncEngine {
       throw const SyncFailure('A synchronization is already running.');
     }
     _running = true;
-    var progress = const SyncProgress(phase: SyncPhase.recovering);
+    var progress = const SyncProgress(phase: SyncPhase.preparing);
     var networkBytesDone = 0;
     int? networkBytesTotal;
     var transferPlanReady = false;
@@ -89,14 +99,17 @@ final class SyncEngine {
       await remoteBackupDirectory.create(recursive: true);
       cache = await Directory.systemTemp.createTemp('synctune-sync-');
 
+      final pendingOperations = stateStore.loadPending();
       await report(
         progress.copyWith(
-          phase: SyncPhase.recovering,
+          phase: pendingOperations.isEmpty
+              ? SyncPhase.preparing
+              : SyncPhase.recovering,
           currentFile: '',
           error: '',
         ),
       );
-      for (final pending in stateStore.loadPending()) {
+      for (final pending in pendingOperations) {
         cancellation.throwIfCancelled();
         if (pending.needsRescan) {
           await _cleanup(pending, cancellation, forRescan: true);

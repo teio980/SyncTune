@@ -27,6 +27,10 @@ final class SyncController extends ChangeNotifier {
   Completer<void>? _activeCompletion;
   bool _disposed = false;
   bool _configurationWriteInProgress = false;
+  bool _resetting = false;
+  bool _freshStartReady = false;
+  bool get isResetting => _resetting;
+  bool get freshStartReady => _freshStartReady;
 
   bool beginExclusiveOperation() {
     if (isRunning || _configurationWriteInProgress) return false;
@@ -69,44 +73,60 @@ final class SyncController extends ChangeNotifier {
     _cancellation = cancellation;
     final completion = Completer<void>();
     _activeCompletion = completion;
-    _publish(const SyncProgress(phase: SyncPhase.recovering));
+    _freshStartReady = false;
+    _publish(const SyncProgress(phase: SyncPhase.preparing));
     var hostStarted = false;
     try {
-      final secret = await credentials.read(settings);
+      final secret = await Future.any<String>(<Future<String>>[
+        credentials.read(settings),
+        cancellation.whenCancelled.then<String>(
+          (_) => throw const SyncCancelled(),
+        ),
+      ]);
       cancellation.throwIfCancelled();
       await executionHost.start(settings);
       hostStarted = true;
+      cancellation.throwIfCancelled();
       await engine.run(
         settings,
         secret: secret,
         cancellation: cancellation,
         onProgress: (next) async {
+          if (_resetting) return;
           _publish(next);
           await executionHost.update(next);
         },
       );
     } on SyncCancelled {
-      _publish(
-        _progress.copyWith(
-          phase: SyncPhase.cancelled,
-          currentFile: '',
-          error: 'Synchronization was cancelled.',
-        ),
-      );
+      if (!_resetting) {
+        _publish(
+          _progress.copyWith(
+            phase: SyncPhase.cancelled,
+            currentFile: '',
+            error: 'Synchronization was cancelled.',
+          ),
+        );
+      }
     } catch (error) {
-      _publish(
-        _progress.copyWith(
-          phase: SyncPhase.failed,
-          currentFile: '',
-          error: error.toString(),
-        ),
-      );
+      if (!_resetting) {
+        _publish(
+          _progress.copyWith(
+            phase: SyncPhase.failed,
+            currentFile: '',
+            error: error.toString(),
+          ),
+        );
+      }
     } finally {
       if (hostStarted) {
         try {
-          await executionHost.finish(_progress);
+          await executionHost.finish(
+            _resetting ? const SyncProgress() : _progress,
+          );
         } catch (error) {
-          if (_progress.phase == SyncPhase.complete) {
+          if (_resetting) {
+            // Resetting publishes its own terminal state after the run exits.
+          } else if (_progress.phase == SyncPhase.complete) {
             _publish(
               _progress.copyWith(
                 phase: SyncPhase.failed,
@@ -132,6 +152,27 @@ final class SyncController extends ChangeNotifier {
 
   void cancel() {
     _cancellation?.cancel();
+  }
+
+  /// Stop active I/O before clearing state so an old run cannot recreate its
+  /// journal or continue writing alongside the next synchronization.
+  Future<void> forceStopAndReset() async {
+    if (_configurationWriteInProgress || _resetting) return;
+    _configurationWriteInProgress = true;
+    _resetting = true;
+    _freshStartReady = false;
+    _publish(const SyncProgress(phase: SyncPhase.stopping));
+    try {
+      await cancelAndWait();
+      await engine.resetForFreshSync();
+      _freshStartReady = true;
+      _publish(const SyncProgress());
+    } catch (error) {
+      _publish(SyncProgress(phase: SyncPhase.failed, error: error.toString()));
+    } finally {
+      _resetting = false;
+      endConfigurationWrite();
+    }
   }
 
   bool get configurationWriteInProgress => _configurationWriteInProgress;

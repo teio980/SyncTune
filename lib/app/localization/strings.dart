@@ -66,6 +66,12 @@ final class SyncTuneStrings {
     'Saving…': '正在保存…',
     'Running': '同步中',
     'Recovering previous work': '正在恢复上次任务',
+    'Preparing sync': '正在准备同步',
+    'Stopping and resetting sync…': '正在停止并重置同步…',
+    'Ready for a fresh sync': '已重置，下次同步将重新开始',
+    'Force stop and reset': '强制停止并重置',
+    'Force stop clears sync history. Next sync scans both folders from scratch. Music and recovery copies are kept.':
+        '强制停止会清空同步记录，下次同步将重新扫描双方文件夹。音乐和恢复副本会保留。',
     'Scanning files': '正在扫描文件',
     'Comparing files': '正在比较文件',
     'Transferring files': '正在传输文件',

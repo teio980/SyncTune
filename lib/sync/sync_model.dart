@@ -373,6 +373,8 @@ final class SyncMusicTrack {
 
 enum SyncPhase {
   idle,
+  preparing,
+  stopping,
   recovering,
   scanning,
   comparing,
