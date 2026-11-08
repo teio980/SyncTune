@@ -161,6 +161,9 @@ final class FileLocalStore implements LocalStore {
     '.synctune',
     '.synctune-local',
     '.synctune-local-v2',
+    '.huawei',
+    'musiclrc',
+    '.musiclrc',
   }.contains(segment.toLowerCase());
 
   File _file(SyncPath path) {
@@ -222,9 +225,7 @@ final class FileLocalStore implements LocalStore {
         final name = entity.uri.pathSegments
             .where((segment) => segment.isNotEmpty)
             .last;
-        if (name.toLowerCase() == '.synctune' ||
-            name.toLowerCase() == '.synctune-local' ||
-            name.toLowerCase() == '.synctune-local-v2') {
+        if (_isInternalMusicPath(name)) {
           continue;
         }
         final relative = current.prefix.isEmpty

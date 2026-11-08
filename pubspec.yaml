@@ -38,6 +38,18 @@ dependencies:
   dio: ^5.11.1
   xml: ^7.1.0
 
+# The package's prebuilt macOS SQLite requires macOS 13. Build the same
+# SQLite version locally for our macOS 12 target; other platforms keep defaults.
+hooks:
+  user_defines:
+    sqlite3:
+      source:
+        macos: source
+      path: third_party/sqlite3/sqlite3.c
+      additional_flags:
+        - '-mmacos-version-min=12.0'
+        - '-O2'
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

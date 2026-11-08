@@ -1,6 +1,6 @@
 # SyncTune
 
-SyncTune is a manual, two-way music synchronizer for Windows and Android. It keeps a local music folder and a folder on an HTTPS WebDAV server in sync, so you can keep the same library on multiple devices.
+SyncTune is a manual, two-way music synchronizer for Windows, Android, and macOS. It keeps a local music folder and a folder on an HTTPS WebDAV server in sync, so you can keep the same library on multiple devices.
 
 ## Features
 
@@ -21,3 +21,19 @@ SyncTune is a manual, two-way music synchronizer for Windows and Android. It kee
 The first sync merges songs already present in both folders and does not infer deletions. If different songs share a path, the WebDAV version keeps that path and SyncTune saves the local version as a conflict copy. On later syncs, additions, edits, and deletions are synchronized between the two folders.
 
 Use **Cancel sync** to pause and resume the same work later. Use **Force stop and reset** to abandon a stuck or interrupted run. It stops active sync work, clears pending operations, scan checkpoints, and sync history, and keeps your settings, music, and recovery copies. The next **Start sync** scans both folders from scratch and merges them like a first sync; songs deleted from only one side may be copied back from the other side. Recovery copies remain in internal storage and are excluded from normal music scans.
+
+## Run and build
+
+Use Flutter **3.47.6** (Dart **3.13.5**), matching CI, then run `flutter pub get`.
+
+```sh
+flutter run -d macos      # macOS 12 or newer; full Xcode required
+flutter run -d windows   # Windows; Visual Studio desktop C++ tools required
+flutter run -d DEVICE_ID # Android device or emulator ID from flutter devices
+```
+
+On macOS, run `scripts/package_macos.sh` to build and verify the universal Release app and create `dist/SyncTune-macos-universal.zip`. Extract the ZIP and open `SyncTune.app`, or copy it to Applications. This build uses a local ad-hoc signature; Developer ID signing and notarization are not included.
+
+macOS stores settings and sync history in `~/Library/Application Support/SyncTune/synctune-state-v2.sqlite` and WebDAV passwords in the login Keychain. Selecting a music folder grants the non-sandboxed app normal filesystem access. Closing the window or pressing **Cmd+Q** cancels active synchronization, waits for cleanup, then quits. Start sync again after reopening to recover interrupted work.
+
+See [macOS development and verification](docs/macos.md) for toolchain setup, native tests, and release checks.

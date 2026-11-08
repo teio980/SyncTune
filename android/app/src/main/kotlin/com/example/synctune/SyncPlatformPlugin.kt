@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.ResultReceiver
@@ -54,6 +55,7 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
     private var activityBinding: ActivityPluginBinding? = null
     private var folderResult: MethodChannel.Result? = null
     private var foregroundStartResult: MethodChannel.Result? = null
+    private var storageResult: MethodChannel.Result? = null
 
     private data class RootScope(val tree: Uri, val generation: String)
     private data class DocumentRef(val uri: Uri, val id: String, val name: String,
@@ -118,9 +120,12 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
             if (!prefs.edit().putString(rootKey(uri), scope.generation).commit()) {
                 throw IllegalStateException("Could not save the selected folder permission.")
             }
+            val physical = resolvePhysicalPath(uri)
+            val locator = physical ?: uri.toString()
+            val stableId = physical ?: uri.toString()
             reply.success(mapOf(
-                "locator" to uri.toString(),
-                "stableId" to uri.toString(),
+                "locator" to locator,
+                "stableId" to stableId,
                 "generation" to scope.generation,
             ))
         } catch (error: Exception) {
@@ -131,6 +136,15 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>,
         grantResults: IntArray): Boolean {
+        if (requestCode == REQUEST_STORAGE) {
+            val reply = storageResult
+            storageResult = null
+            if (reply != null) {
+                val granted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+                reply.success(granted)
+            }
+            return true
+        }
         if (requestCode != REQUEST_NOTIFICATIONS) return false
         val reply = foregroundStartResult
         foregroundStartResult = null
@@ -157,6 +171,21 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
             "foregroundUpdate" -> foregroundUpdate(call, result)
             "foregroundFinish" -> foregroundFinish(call, result)
             "allowWindowClose" -> result.notImplemented()
+            "isReparsePoint" -> result.success(false)
+            "hasStoragePermissions" -> result.success(hasStoragePermissions())
+            "requestStoragePermissions" -> requestStoragePermissions(result)
+            "resolveLocalRoot" -> {
+                val root = call.argument<String>("root")
+                if (root == null) {
+                    result.success(null)
+                } else if (root.startsWith("/")) {
+                    result.success(root)
+                } else {
+                    val uri = try { Uri.parse(root) } catch (_: Exception) { null }
+                    val physical = if (uri != null) resolvePhysicalPath(uri) else null
+                    result.success(physical)
+                }
+            }
             "safCancelRequest" -> {
                 call.argument<String>("requestId")?.let { cancellations[it]?.set(true) }
                 result.success(null)
@@ -169,6 +198,81 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
             else -> if (call.method.startsWith("saf")) dispatchSaf(call, result)
             else result.notImplemented()
         }
+    }
+
+    private fun hasStoragePermissions(): Boolean {
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.Q) return true
+        val read = context.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        val write = context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        return read && write
+    }
+
+    private fun requestStoragePermissions(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.Q || hasStoragePermissions()) {
+            result.success(true)
+            return
+        }
+        val host = activity
+        if (host == null) {
+            result.error("activity_unavailable", "Open SyncTune to grant storage permission.", null)
+            return
+        }
+        if (storageResult != null) {
+            result.error("storage_permission_busy", "A storage permission request is already pending.", null)
+            return
+        }
+        storageResult = result
+        try {
+            host.requestPermissions(
+                arrayOf(
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ),
+                REQUEST_STORAGE
+            )
+        } catch (error: Exception) {
+            storageResult = null
+            result.error("storage_permission", error.message, null)
+        }
+    }
+
+    private fun resolvePhysicalPath(uri: Uri): String? {
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.Q) return null
+        if (uri.scheme == "file") return uri.path
+        if (!DocumentsContract.isTreeUri(uri)) return null
+
+        val docId = try {
+            DocumentsContract.getTreeDocumentId(uri)
+        } catch (_: Exception) {
+            return null
+        } ?: return null
+
+        val parts = docId.split(":", limit = 2)
+        val type = parts[0]
+        val subPath = if (parts.size > 1) parts[1].trimStart('/') else ""
+
+        if (type.equals("primary", ignoreCase = true)) {
+            val root = Environment.getExternalStorageDirectory()?.absolutePath ?: "/storage/emulated/0"
+            val path = if (subPath.isEmpty()) root else "$root/$subPath"
+            return File(path).absolutePath
+        } else {
+            val candidate = File("/storage/$type/$subPath")
+            if (candidate.exists() || File("/storage/$type").exists()) {
+                return candidate.absolutePath
+            }
+            val externalDirs = context.getExternalFilesDirs(null)
+            for (dir in externalDirs) {
+                if (dir != null) {
+                    val abs = dir.absolutePath
+                    val index = abs.indexOf(type)
+                    if (index != -1) {
+                        val root = abs.substring(0, index + type.length)
+                        return File("$root/$subPath").absolutePath
+                    }
+                }
+            }
+        }
+        return null
     }
 
     private fun pickFolder(result: MethodChannel.Result) {
@@ -202,10 +306,12 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
         if (old != null && old != next) {
             try {
                 val uri = Uri.parse(old)
-                resolver.releasePersistableUriPermission(uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                context.getSharedPreferences(ROOT_PREFS, Context.MODE_PRIVATE)
-                    .edit().remove(rootKey(uri)).apply()
+                if (uri.scheme == "content") {
+                    resolver.releasePersistableUriPermission(uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                    context.getSharedPreferences(ROOT_PREFS, Context.MODE_PRIVATE)
+                        .edit().remove(rootKey(uri)).apply()
+                }
             } catch (error: SecurityException) {
                 result.error("folder_release", error.message, null)
                 return
@@ -447,6 +553,16 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
         return 0
     }
 
+    private fun isInternalMusicDirectory(name: String): Boolean {
+        val lower = name.lowercase()
+        return lower == ".synctune" ||
+            lower == ".synctune-local" ||
+            lower == ".synctune-local-v2" ||
+            lower == ".huawei" ||
+            lower == "musiclrc" ||
+            lower == ".musiclrc"
+    }
+
     private fun scanList(scope: RootScope, cancelled: AtomicBoolean): Map<String, Any?> {
         val files = ArrayList<Map<String, Any?>>()
         val occupiedPaths = ArrayList<Map<String, Any?>>()
@@ -460,9 +576,7 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
             if (!visited.add(directory.id)) throw IllegalStateException("The document provider returned a directory cycle.")
             for (child in children(scope, directory)) {
                 checkCancelled(cancelled)
-                if (child.name.equals(".synctune", true) ||
-                    child.name.equals(".synctune-local", true) ||
-                    child.name.equals(".synctune-local-v2", true)) continue
+                if (isInternalMusicDirectory(child.name)) continue
                 val path = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
                 occupiedPaths.add(mapOf("path" to path, "isDirectory" to (child.mime == DIR)))
                 if (child.mime == DIR) {
@@ -507,9 +621,7 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
             val (directory, prefix) = pending.removeLast()
             if (!visited.add(directory.id)) throw IllegalStateException("The document provider returned a directory cycle.")
             for (child in children(scope, directory)) {
-                if (child.name.equals(".synctune", true) ||
-                    child.name.equals(".synctune-local", true) ||
-                    child.name.equals(".synctune-local-v2", true)) continue
+                if (isInternalMusicDirectory(child.name)) continue
                 val path = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
                 if (child.mime == DIR) {
                     pending.add(child to path)
@@ -530,9 +642,7 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
     private fun deleteMusic(scope: RootScope, call: MethodCall): Map<String, Any> {
         val path = requiredString(call, "path")
         val parts = normalizedSegments(path)
-        val internal = parts.any { it.equals(".synctune", true) ||
-            it.equals(".synctune-local", true) ||
-            it.equals(".synctune-local-v2", true) }
+        val internal = parts.any { isInternalMusicDirectory(it) }
         if (internal || parts.last().substringAfterLast('.', "").lowercase() !in MUSIC_EXTENSIONS) {
             throw IllegalArgumentException("Only music files in the selected folder can be deleted.")
         }
@@ -1139,6 +1249,7 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
         private const val CHANNEL = "synctune/sync_platform"
         private const val PICK_FOLDER = 708
         private const val REQUEST_NOTIFICATIONS = 709
+        private const val REQUEST_STORAGE = 710
         private const val ROOT_PREFS = "synctune_roots_v2"
         private const val CREDENTIAL_PREFS = "synctune_credentials_v2"
         private const val DIR = DocumentsContract.Document.MIME_TYPE_DIR

@@ -33,3 +33,48 @@ jobs:
 
       - name: Run behavior tests
         run: flutter test
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.6
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: Analyze Dart sources
+        run: flutter analyze
+
+      - name: Run behavior tests on macOS
+        run: flutter test
+
+      - name: Prepare native test host
+        run: flutter build macos --debug
+
+      - name: Test AppKit channel, Keychain, and quit handshake
+        run: >-
+          xcodebuild test -project macos/Runner.xcodeproj -scheme Runner
+          -configuration Debug -destination 'platform=macOS'
+          -derivedDataPath build/macos-tests CODE_SIGN_IDENTITY=-
+
+      - name: Build and verify universal release
+        run: scripts/package_macos.sh
+
+      - name: Upload macOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: SyncTune-macos-universal
+          path: dist/SyncTune-macos-universal.zip
+          if-no-files-found: error

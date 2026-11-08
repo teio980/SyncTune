@@ -13,7 +13,8 @@ import '../sync/sync_platform.dart';
 
 /// Direct platform binding for the one sync controller. Android owns SAF,
 /// Keystore, and foreground-service work; Windows uses Dart IO and a small
-/// Win32 channel for the picker and Credential Manager.
+/// Win32 channel for the picker and Credential Manager. macOS uses the same
+/// Dart IO store with an AppKit picker and Keychain credentials.
 final class SyncPlatformAdapters
     implements
         SyncCredentialStore,
@@ -26,6 +27,7 @@ final class SyncPlatformAdapters
   final MethodChannel channel;
   DateTime _lastNotificationUpdate = DateTime.fromMillisecondsSinceEpoch(0);
   SyncPhase? _lastNotifiedPhase;
+  Future<void>? _windowCloseRequest;
 
   void bind(SyncController controller) {
     channel.setMethodCallHandler((call) async {
@@ -34,8 +36,8 @@ final class SyncPlatformAdapters
           controller.cancel();
           return null;
         case 'windowCloseRequested':
-          await controller.cancelAndWait();
-          await channel.invokeMethod<void>('allowWindowClose');
+          await (_windowCloseRequest ??= _closeWindow(controller)
+              .whenComplete(() => _windowCloseRequest = null));
           return null;
         default:
           throw MissingPluginException(
@@ -45,8 +47,13 @@ final class SyncPlatformAdapters
     });
   }
 
+  Future<void> _closeWindow(SyncController controller) async {
+    await controller.cancelAndWait();
+    await channel.invokeMethod<void>('allowWindowClose');
+  }
+
   Future<String> databasePath() async {
-    if (Platform.isAndroid || Platform.isWindows) {
+    if (Platform.isAndroid || Platform.isWindows || Platform.isMacOS) {
       final path = await channel.invokeMethod<String>('stateDatabasePath');
       if (path == null || path.isEmpty) {
         throw const SyncFailure(
@@ -55,7 +62,9 @@ final class SyncPlatformAdapters
       }
       return path;
     }
-    throw const SyncFailure('SyncTune supports Android and Windows only.');
+    throw const SyncFailure(
+      'SyncTune supports Android, Windows, and macOS only.',
+    );
   }
 
   @override
@@ -121,43 +130,62 @@ final class SyncPlatformAdapters
     });
   }
 
+  static final Map<String, String> _resolvedPhysicalRoots = <String, String>{};
+
+  static bool _isDirectFilePath(String root) =>
+      root.startsWith('/') || RegExp(r'^[A-Za-z]:[\\/]').hasMatch(root);
+
+  Future<String> _effectiveRoot(SyncSettings settings) async {
+    final root = settings.localRoot;
+    if (_isDirectFilePath(root)) return root;
+    if (!Platform.isAndroid) return root;
+    final cached = _resolvedPhysicalRoots[root];
+    if (cached != null) return cached;
+    try {
+      final physical = await channel.invokeMethod<String>(
+        'resolveLocalRoot',
+        <String, Object?>{'root': root},
+      );
+      if (physical != null && _isDirectFilePath(physical)) {
+        await channel.invokeMethod<bool>('requestStoragePermissions');
+        _resolvedPhysicalRoots[root] = physical;
+        return physical;
+      }
+    } catch (_) {}
+    return root;
+  }
+
   @override
   Future<List<SyncMusicTrack>> listMusic(SyncSettings settings) async {
-    if (Platform.isAndroid) {
-      return _SafLocalStore(
-        channel,
-        settings.localRoot,
-        settings.localGeneration,
-      ).listMusic();
+    final root = await _effectiveRoot(settings);
+    if (!Platform.isAndroid || _isDirectFilePath(root)) {
+      return _desktopFileStore(channel, root).listMusic();
     }
-    return _fileStore(settings).listMusic();
+    return _SafLocalStore(
+      channel,
+      settings.localRoot,
+      settings.localGeneration,
+    ).listMusic();
   }
 
   @override
   Future<void> deleteMusic(SyncSettings settings, SyncMusicTrack track) async {
-    if (Platform.isAndroid) {
+    final root = await _effectiveRoot(settings);
+    if (!Platform.isAndroid || _isDirectFilePath(root)) {
+      await _desktopFileStore(channel, root).deleteMusic(track);
+    } else {
       await _SafLocalStore(
         channel,
         settings.localRoot,
         settings.localGeneration,
       ).deleteMusic(track);
-    } else {
-      await _fileStore(settings).deleteMusic(track);
     }
   }
-
-  FileLocalStore _fileStore(SyncSettings settings) => FileLocalStore(
-    settings.localRoot,
-    isReparsePoint: (path) async =>
-        await channel.invokeMethod<bool>('isReparsePoint', <String, Object?>{
-          'path': path,
-        }) ??
-        false,
-  );
 
   @override
   Future<void> start(SyncSettings settings) async {
     if (Platform.isAndroid) {
+      await _effectiveRoot(settings);
       await channel.invokeMethod<void>('foregroundStart');
       _lastNotifiedPhase = null;
     }
@@ -201,6 +229,19 @@ final class SyncPlatformAdapters
 String _credentialIdentity(SyncSettings settings) =>
     sha256.convert(utf8.encode(settings.syncIdentity)).toString();
 
+FileLocalStore _desktopFileStore(MethodChannel channel, String root) =>
+    FileLocalStore(
+      root,
+      isReparsePoint: Platform.isWindows
+          ? (path) async =>
+                await channel.invokeMethod<bool>(
+                  'isReparsePoint',
+                  <String, Object?>{'path': path},
+                ) ??
+                false
+          : null,
+    );
+
 final class _ConfiguredLocalStore implements ConfigurableLocalStore {
   _ConfiguredLocalStore(this.channel);
 
@@ -213,17 +254,14 @@ final class _ConfiguredLocalStore implements ConfigurableLocalStore {
       return;
     }
     _settings = settings;
-    _delegate = Platform.isAndroid
-        ? _SafLocalStore(channel, settings.localRoot, settings.localGeneration)
-        : FileLocalStore(
-            settings.localRoot,
-            isReparsePoint: (path) async =>
-                await channel.invokeMethod<bool>(
-                  'isReparsePoint',
-                  <String, Object?>{'path': path},
-                ) ??
-                false,
-          );
+    final cachedPhysical =
+        SyncPlatformAdapters._resolvedPhysicalRoots[settings.localRoot];
+    final root = cachedPhysical ?? settings.localRoot;
+    final isDirectFile =
+        !Platform.isAndroid || SyncPlatformAdapters._isDirectFilePath(root);
+    _delegate = isDirectFile
+        ? _desktopFileStore(channel, root)
+        : _SafLocalStore(channel, settings.localRoot, settings.localGeneration);
   }
 
   LocalStore get _store =>

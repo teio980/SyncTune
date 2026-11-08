@@ -24,7 +24,7 @@ final class SyncFolderSelection {
     required this.generation,
   });
 
-  /// A Windows absolute path or a platform-owned SAF document-tree token.
+  /// A desktop absolute path or a platform-owned SAF document-tree token.
   final String locator;
   final String stableId;
   final String generation;
