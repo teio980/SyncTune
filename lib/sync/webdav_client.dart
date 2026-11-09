@@ -8,6 +8,7 @@ import 'package:dio/dio.dart';
 import 'package:xml/xml.dart';
 
 import 'sync_model.dart';
+import 'sync_diagnostics.dart';
 
 final class WebDavClient {
   WebDavClient({Dio? dio})
@@ -239,6 +240,11 @@ final class WebDavClient {
       () => cancel.cancel('Sync cancelled.'),
     );
     final allHeaders = _headers(settings, extra: headers);
+    SyncDiagnostics.record('http_request', {
+      'method': method,
+      'contentLength': contentLength,
+      'conditionalMutation': conditionalMutation,
+    });
     if (contentLength != null) {
       allHeaders[HttpHeaders.contentLengthHeader] = '$contentLength';
     }
@@ -258,6 +264,10 @@ final class WebDavClient {
       );
       token.throwIfCancelled();
       final code = response.statusCode ?? 0;
+      SyncDiagnostics.record('http_response', {
+        'method': method,
+        'statusCode': code,
+      });
       if (code == 412) {
         final relative = _relativeSegments(_rootUri(settings), uri);
         throw SyncFailure(
@@ -450,6 +460,13 @@ final class WebDavClient {
         onFile?.call(path.value);
         await onMusicFile?.call(path);
         if (_isStrongEtag(etag) && saved?.remoteEtag == etag) {
+          SyncDiagnostics.record('remote_scan', {
+            'path': path.value,
+            'reuse': 'baseline',
+            'etag': etag,
+            'sha256': saved?.sha256,
+            'size': entry.length,
+          });
           output.add(
             SyncFile(
               path: path,
@@ -465,6 +482,13 @@ final class WebDavClient {
             ? checkpoint?.remoteFile(path, etag: etag!, size: listedLength)
             : null;
         if (checkpointed != null) {
+          SyncDiagnostics.record('remote_scan', {
+            'path': path.value,
+            'reuse': 'checkpoint',
+            'etag': etag,
+            'sha256': checkpointed.sha256,
+            'size': checkpointed.size,
+          });
           output.add(
             SyncFile(
               path: path,
@@ -475,10 +499,26 @@ final class WebDavClient {
           );
           continue;
         }
+        SyncDiagnostics.record('remote_scan', {
+          'path': path.value,
+          'reuse': 'none',
+          'etag': etag,
+          'strongEtag': _isStrongEtag(etag),
+          'size': entry.length,
+          'baselinePresent': saved != null,
+          'baselineEtag': saved?.remoteEtag,
+          'baselineHash': saved?.sha256,
+          'reason': saved == null
+              ? 'no_baseline'
+              : !_isStrongEtag(etag)
+              ? 'no_strong_etag'
+              : 'etag_changed',
+        });
         final hashed = await _hashRemote(
           settings,
           path,
           token,
+          purpose: 'scan_hash',
           etag: etag,
           expectedLength: entry.length,
           onBytes: onBytes == null
@@ -662,10 +702,17 @@ final class WebDavClient {
     SyncPath path,
     Directory directory,
     CancellationToken token, {
+    required String purpose,
     String? etag,
     int? expectedLength,
     Future<void> Function(int bytes)? onBytes,
   }) async {
+    SyncDiagnostics.record('download_start', {
+      'path': path.value,
+      'purpose': purpose,
+      'etag': etag,
+      'expectedBytes': expectedLength,
+    });
     final headers = <String, String>{};
     if (etag != null &&
         RegExp(r'^"[\x21\x23-\x7e\x80-\xff]*"$').hasMatch(etag)) {
@@ -721,13 +768,26 @@ final class WebDavClient {
           path: path,
         );
       }
+      SyncDiagnostics.record('download_complete', {
+        'path': path.value,
+        'purpose': purpose,
+        'bytes': length,
+        'sha256': digests.value.toString(),
+        'etag': returnedEtag,
+      });
       return (
         file: file,
         sha256: digests.value.toString(),
         length: length,
         etag: returnedEtag,
       );
-    } catch (_) {
+    } catch (error) {
+      SyncDiagnostics.record('download_failed', {
+        'path': path.value,
+        'purpose': purpose,
+        'bytes': length,
+        'errorType': error.runtimeType.toString(),
+      });
       await sink.close();
       if (await file.exists()) await file.delete();
       rethrow;
@@ -738,6 +798,7 @@ final class WebDavClient {
     SyncSettings settings,
     SyncPath path,
     CancellationToken token, {
+    required String purpose,
     String? etag,
     int? expectedLength,
     Future<void> Function(int bytes)? onBytes,
@@ -748,11 +809,19 @@ final class WebDavClient {
           settings,
           path,
           token,
+          purpose: purpose,
           etag: etag,
           expectedLength: expectedLength,
           onBytes: onBytes,
         );
       } on SyncFailure catch (error) {
+        SyncDiagnostics.record('download_attempt_failed', {
+          'path': path.value,
+          'purpose': purpose,
+          'attempt': attempt,
+          'statusCode': error.statusCode,
+          'retryable': error.retryable,
+        });
         if (!error.retryable || attempt >= _retryDelays.length) rethrow;
         await _retryPause(attempt, token);
       }
@@ -763,10 +832,17 @@ final class WebDavClient {
     SyncSettings settings,
     SyncPath path,
     CancellationToken token, {
+    required String purpose,
     String? etag,
     int? expectedLength,
     Future<void> Function(int bytes)? onBytes,
   }) async {
+    SyncDiagnostics.record('download_start', {
+      'path': path.value,
+      'purpose': purpose,
+      'etag': etag,
+      'expectedBytes': expectedLength,
+    });
     final headers = <String, String>{};
     if (_isStrongEtag(etag)) headers[HttpHeaders.ifMatchHeader] = etag!;
     final response = await _request<ResponseBody>(
@@ -800,10 +876,28 @@ final class WebDavClient {
         await onBytes?.call(chunk.length);
       });
     } on SyncCancelled {
+      SyncDiagnostics.record('download_failed', {
+        'path': path.value,
+        'purpose': purpose,
+        'bytes': length,
+        'errorType': 'SyncCancelled',
+      });
       rethrow;
     } on SyncFailure {
+      SyncDiagnostics.record('download_failed', {
+        'path': path.value,
+        'purpose': purpose,
+        'bytes': length,
+        'errorType': 'SyncFailure',
+      });
       rethrow;
     } catch (error) {
+      SyncDiagnostics.record('download_failed', {
+        'path': path.value,
+        'purpose': purpose,
+        'bytes': length,
+        'errorType': error.runtimeType.toString(),
+      });
       if (token.isCancelled ||
           (error is DioException && error.type == DioExceptionType.cancel)) {
         throw const SyncCancelled();
@@ -828,6 +922,13 @@ final class WebDavClient {
         path: path,
       );
     }
+    SyncDiagnostics.record('download_complete', {
+      'path': path.value,
+      'purpose': purpose,
+      'bytes': length,
+      'sha256': digests.value.toString(),
+      'etag': returnedEtag,
+    });
     return _HashResultWithEtag(digests.value.toString(), length, returnedEtag);
   }
 
@@ -845,6 +946,7 @@ final class WebDavClient {
       source.path,
       cacheDirectory,
       token,
+      purpose: 'transfer_source',
       etag: source.etag,
       onBytes: onBytes == null
           ? null
@@ -867,12 +969,20 @@ final class WebDavClient {
     SyncPath path,
     Map<SyncPath, BaselineEntry> baseline,
     Directory cacheDirectory,
-    CancellationToken token,
-  ) async {
+    CancellationToken token, {
+    String purpose = 'inspect',
+  }) async {
     final metadata = await _metadata(settings, path, token);
     if (metadata == null) return null;
     final saved = baseline[path];
     if (_isStrongEtag(metadata.etag) && saved?.remoteEtag == metadata.etag) {
+      SyncDiagnostics.record('remote_inspect', {
+        'path': path.value,
+        'purpose': purpose,
+        'reuse': 'baseline',
+        'etag': metadata.etag,
+        'sha256': saved?.sha256,
+      });
       return SyncFile(
         path: path,
         sha256: saved!.sha256,
@@ -884,6 +994,7 @@ final class WebDavClient {
       settings,
       path,
       token,
+      purpose: purpose,
       etag: metadata.etag,
       expectedLength: metadata.length,
     );
@@ -924,6 +1035,7 @@ final class WebDavClient {
         previousEtag,
         backupPath,
         token,
+        purpose: 'backup_before_upload',
       );
       if (!backup) {
         throw SyncFailure(
@@ -937,6 +1049,7 @@ final class WebDavClient {
           path,
           Directory(File(backupPath).parent.path),
           token,
+          purpose: 'pre_upload_weak_etag_check',
           etag: metadata.etag,
           expectedLength: metadata.length,
         );
@@ -1014,6 +1127,7 @@ final class WebDavClient {
       expectedEtag,
       backupPath,
       token,
+      purpose: 'backup_before_delete',
     );
     final etag = metadata.etag;
     if (!_isStrongEtag(etag)) {
@@ -1022,6 +1136,7 @@ final class WebDavClient {
         path,
         File(backupPath).parent,
         token,
+        purpose: 'pre_delete_weak_etag_check',
         etag: etag,
         expectedLength: metadata.length,
       );
@@ -1116,8 +1231,9 @@ final class WebDavClient {
     String expectedHash,
     String? expectedEtag,
     String backupPath,
-    CancellationToken token,
-  ) async {
+    CancellationToken token, {
+    required String purpose,
+  }) async {
     final backup = File(backupPath);
     await backup.parent.create(recursive: true);
     final storedExists = await backup.exists();
@@ -1147,6 +1263,7 @@ final class WebDavClient {
       path,
       backup.parent,
       token,
+      purpose: purpose,
       etag: metadata.etag,
       expectedLength: metadata.length,
     );

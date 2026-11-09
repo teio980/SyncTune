@@ -5,6 +5,7 @@ import 'app/sync_tune_app.dart';
 import 'platform/sync_platform_adapters.dart';
 import 'sync/state_store.dart';
 import 'sync/sync_controller.dart';
+import 'sync/sync_diagnostics.dart';
 import 'sync/sync_engine.dart';
 import 'sync/webdav_client.dart';
 
@@ -12,6 +13,10 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
     final platform = SyncPlatformAdapters();
+    if (SyncDiagnostics.requested) {
+      SyncDiagnostics.writer = platform.writeDiagnostic;
+      SyncDiagnostics.record('diagnostics_enabled');
+    }
     final stateStore = SqliteStateStore(await platform.databasePath());
     await stateStore.open();
     final config = ValueNotifier<SyncAppConfig>(

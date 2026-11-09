@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:sqlite3/sqlite3.dart';
 
 import 'sync_model.dart';
+import 'sync_diagnostics.dart';
 
 final class SqliteStateStore {
   SqliteStateStore(this.databasePath);
@@ -210,12 +211,21 @@ final class SqliteStateStore {
   /// Reset the baseline too: a target missing after an interrupted commit must
   /// be treated as a fresh copy, rather than a deletion to propagate.
   void resetForFreshSync() {
+    SyncDiagnostics.recordLazy(
+      'reset_requested',
+      () => {
+        'baselineCount': loadBaseline().length,
+        'pendingCount': loadPending().length,
+        'checkpointCount': scanCheckpointCount(),
+      },
+    );
     _db.execute('BEGIN IMMEDIATE');
     try {
       _db.execute('DELETE FROM pending_operations');
       _db.execute('DELETE FROM scan_checkpoint');
       _db.execute('DELETE FROM baseline');
       _db.execute('COMMIT');
+      SyncDiagnostics.record('reset_completed');
     } catch (_) {
       _db.execute('ROLLBACK');
       rethrow;

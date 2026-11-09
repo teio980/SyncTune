@@ -6,6 +6,7 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:synctune/sync/local_store.dart';
 import 'package:synctune/sync/state_store.dart';
 import 'package:synctune/sync/sync_engine.dart';
+import 'package:synctune/sync/sync_diagnostics.dart';
 import 'package:synctune/sync/sync_model.dart';
 import 'package:synctune/sync/webdav_client.dart';
 
@@ -30,9 +31,119 @@ void main() {
   });
 
   tearDown(() async {
+    SyncDiagnostics.writer = null;
     await server.close();
     await directory.delete(recursive: true);
   });
+
+  test(
+    'diagnostics distinguish timestamp edits, reset reads and local uploads',
+    () async {
+      final state = SqliteStateStore('${directory.path}/diagnostics.sqlite');
+      await state.open();
+      addTearDown(state.close);
+      final engine = SyncEngine(
+        localStore: FileLocalStore(settings.localRoot),
+        webDav: WebDavClient(),
+        stateStore: state,
+      );
+      final file = File('${settings.localRoot}/song.mp3');
+      await file.writeAsString('shared song');
+      server.set('song.mp3', utf8.encode('shared song'));
+      final lines = <String>[];
+      SyncDiagnostics.writer = lines.add;
+      await _run(engine, settings);
+
+      lines.clear();
+      final gets = server.getCount('song.mp3');
+      await file.setLastModified(DateTime(2025));
+      await _run(engine, settings);
+      final timestampEvents = lines
+          .map((s) => jsonDecode(s) as Map<String, dynamic>)
+          .toList();
+      final decision = timestampEvents.singleWhere(
+        (e) => e['event'] == 'decision',
+      );
+      expect(decision['needsLocalWrite'], false);
+      expect(decision['needsRemoteWrite'], false);
+      expect(
+        timestampEvents.where((e) => e['event'] == 'download_start'),
+        isEmpty,
+      );
+      expect(server.getCount('song.mp3'), gets);
+
+      lines.clear();
+      await engine.resetForFreshSync();
+      await _run(engine, settings);
+      final resetEvents = lines
+          .map((s) => jsonDecode(s) as Map<String, dynamic>)
+          .toList();
+      expect(resetEvents.any((e) => e['event'] == 'reset_completed'), true);
+      expect(
+        resetEvents.any(
+          (e) => e['event'] == 'remote_scan' && e['reason'] == 'no_baseline',
+        ),
+        true,
+      );
+      expect(
+        resetEvents.singleWhere(
+          (e) => e['event'] == 'download_complete',
+        )['purpose'],
+        'scan_hash',
+      );
+      expect(server.getCount('song.mp3'), gets + 1);
+
+      lines.clear();
+      await file.writeAsString('edited local song');
+      await _run(engine, settings);
+      final editEvents = lines
+          .map((s) => jsonDecode(s) as Map<String, dynamic>)
+          .toList();
+      expect(
+        editEvents
+            .where((e) => e['event'] == 'download_start')
+            .map((e) => e['purpose']),
+        containsAll(['backup_before_upload', 'upload_verification']),
+      );
+      expect(
+        editEvents
+            .where((e) => e['event'] == 'download_start')
+            .any((e) => e['purpose'] == 'transfer_source'),
+        false,
+      );
+      expect(editEvents.last['event'], 'run_end');
+      expect(editEvents.last['result'], 'complete');
+      final text = lines.join('\n');
+      expect(text, isNot(contains(settings.serverUrl)));
+      expect(text, isNot(contains(settings.localRoot)));
+      expect(text, isNot(contains('test-secret')));
+      expect(text, isNot(contains('Authorization')));
+    },
+  );
+
+  test(
+    'a failing diagnostic sink cannot break synchronization or reset',
+    () async {
+      final state = SqliteStateStore('${directory.path}/broken-log.sqlite');
+      await state.open();
+      addTearDown(state.close);
+      final engine = SyncEngine(
+        localStore: FileLocalStore(settings.localRoot),
+        webDav: WebDavClient(),
+        stateStore: state,
+      );
+      server.set('song.mp3', utf8.encode('cloud song'));
+      SyncDiagnostics.writer = (_) =>
+          throw const FileSystemException('disk unavailable');
+      await _run(engine, settings);
+      expect(
+        await File('${settings.localRoot}/song.mp3').readAsString(),
+        'cloud song',
+      );
+      await engine.resetForFreshSync();
+      expect(state.loadBaseline(), isEmpty);
+    },
+  );
 
   test(
     'local checkpoints resume scans while verification always rereads files',

@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'local_store.dart';
 import 'state_store.dart';
+import 'sync_diagnostics.dart';
 import 'sync_model.dart';
 import 'sync_planner.dart';
 import 'webdav_client.dart';
@@ -54,12 +55,14 @@ final class SyncEngine {
       throw const SyncFailure('A synchronization is already running.');
     }
     _running = true;
+    SyncDiagnostics.beginRun();
     var progress = const SyncProgress(phase: SyncPhase.preparing);
     var networkBytesDone = 0;
     int? networkBytesTotal;
     var transferPlanReady = false;
     Future<void> report(SyncProgress next) async {
       progress = next;
+      SyncDiagnostics.phase(next.phase.name);
       await onProgress?.call(next);
     }
 
@@ -90,7 +93,15 @@ final class SyncEngine {
         configuredStore.configure(settings);
       }
       await stateStore.open();
-      stateStore.ensureIdentity(settings.syncIdentity);
+      final identityChanged = stateStore.ensureIdentity(settings.syncIdentity);
+      SyncDiagnostics.recordLazy(
+        'state_opened',
+        () => {
+          'identityChanged': identityChanged,
+          'baselineCount': stateStore.loadBaseline().length,
+          'checkpointCount': stateStore.scanCheckpointCount(),
+        },
+      );
       webDav.setSecret(secret);
       final support = Directory(File(stateStore.databasePath).parent.path);
       final remoteBackupDirectory = Directory(
@@ -100,6 +111,9 @@ final class SyncEngine {
       cache = await Directory.systemTemp.createTemp('synctune-sync-');
 
       final pendingOperations = stateStore.loadPending();
+      SyncDiagnostics.record('recovery_queue', {
+        'count': pendingOperations.length,
+      });
       await report(
         progress.copyWith(
           phase: pendingOperations.isEmpty
@@ -110,6 +124,13 @@ final class SyncEngine {
         ),
       );
       for (final pending in pendingOperations) {
+        SyncDiagnostics.record('recovery_operation', {
+          'operation': pending.id,
+          'path': pending.path.value,
+          'kind': pending.kind,
+          'needsRescan': pending.needsRescan,
+          'complete': pending.complete,
+        });
         cancellation.throwIfCancelled();
         if (pending.needsRescan) {
           await _cleanup(pending, cancellation, forRescan: true);
@@ -228,6 +249,13 @@ final class SyncEngine {
         return bytes;
       });
       transferPlanReady = true;
+      SyncDiagnostics.record('plan_summary', {
+        'localCount': local.length,
+        'remoteCount': remote.length,
+        'baselineCount': baseline.length,
+        'decisionCount': plan.length,
+        'plannedTransferBytes': networkBytesTotal,
+      });
       await report(
         progress.copyWith(
           phase: SyncPhase.comparing,
@@ -308,6 +336,11 @@ final class SyncEngine {
       );
     } catch (error) {
       primaryFailure = error;
+      SyncDiagnostics.record('run_failed', {
+        'errorType': error.runtimeType.toString(),
+        if (error is SyncFailure) 'statusCode': error.statusCode,
+        if (error is SyncFailure) 'path': error.path?.value,
+      });
       rethrow;
     } finally {
       webDav.clearSecret();
@@ -316,6 +349,7 @@ final class SyncEngine {
           await cache.delete(recursive: true);
         } catch (error) {
           if (primaryFailure == null) {
+            SyncDiagnostics.endRun('cleanup_failed');
             _running = false;
             throw SyncFailure(
               'Could not remove the temporary WebDAV comparison cache: $error',
@@ -324,6 +358,13 @@ final class SyncEngine {
         }
       }
       _running = false;
+      SyncDiagnostics.endRun(
+        primaryFailure == null
+            ? 'complete'
+            : primaryFailure is SyncCancelled
+            ? 'cancelled'
+            : 'failed',
+      );
     }
   }
 
@@ -342,6 +383,7 @@ final class SyncEngine {
       const <SyncPath, BaselineEntry>{},
       cache,
       cancellation,
+      purpose: 'recovery_inspect',
     );
     try {
       final remoteHash = remote?.sha256;
@@ -429,6 +471,21 @@ final class SyncEngine {
   ) async {
     final localHash = local?.sha256;
     final remoteHash = remote?.sha256;
+    SyncDiagnostics.record('decision', {
+      'path': desired.path.value,
+      'localHash': localHash,
+      'remoteHash': remoteHash,
+      'baselineHash': baseline[desired.path]?.sha256,
+      'desiredHash': desired.sha256,
+      'sourceSide': desired.sourceSide?.name,
+      'sourcePath': desired.sourcePath?.value,
+      'localModifiedMs': local?.modifiedMs,
+      'baselineModifiedMs': baseline[desired.path]?.localModifiedMs,
+      'remoteEtag': remote?.etag,
+      'baselineEtag': baseline[desired.path]?.remoteEtag,
+      'needsLocalWrite': localHash != desired.sha256,
+      'needsRemoteWrite': remoteHash != desired.sha256,
+    });
     if (localHash != desired.previousLocalHash && localHash != desired.sha256) {
       throw SyncFailure(
         'The local scan no longer matches its synchronization decision.',
@@ -546,6 +603,7 @@ final class SyncEngine {
             baseline,
             cache,
             cancellation,
+            purpose: 'pending_operation_inspect',
           );
     SyncFile? uploadedVerification;
     try {
@@ -623,6 +681,7 @@ final class SyncEngine {
           const <SyncPath, BaselineEntry>{},
           cache,
           cancellation,
+          purpose: 'upload_verification',
         );
         if (uploadedVerification?.sha256 != expectedRemote) {
           throw SyncFailure(
@@ -688,6 +747,12 @@ final class SyncEngine {
         cancellation,
         onNetworkBytes,
       );
+      SyncDiagnostics.record('local_commit', {
+        'operation': operation.id,
+        'path': operation.path.value,
+        'expectedHash': expected,
+        'previousHash': operation.previousLocalHash,
+      });
       await localStore.commit(
         operation.path,
         stageKey,
@@ -715,6 +780,7 @@ final class SyncEngine {
           _verificationBaseline(operation.path, remoteBefore),
           cache,
           cancellation,
+          purpose: 'operation_verification',
         );
     try {
       if (verifiedLocal != operation.expectedLocalHash ||
@@ -781,6 +847,13 @@ final class SyncEngine {
     if (current == expected) return;
     final sourcePath = operation.sourcePath;
     final sourceSide = operation.sourceSide;
+    SyncDiagnostics.record('stage_source', {
+      'operation': operation.id,
+      'path': operation.path.value,
+      'sourcePath': sourcePath?.value,
+      'sourceSide': sourceSide,
+      'expectedHash': expected,
+    });
     if (sourcePath == null ||
         (sourceSide != 'local' && sourceSide != 'remote')) {
       throw SyncFailure(

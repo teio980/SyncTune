@@ -37,3 +37,38 @@ On macOS, run `scripts/package_macos.sh` to build and verify the universal Relea
 macOS stores settings and sync history in `~/Library/Application Support/SyncTune/synctune-state-v2.sqlite` and WebDAV passwords in the login Keychain. Selecting a music folder grants the non-sandboxed app normal filesystem access. Closing the window or pressing **Cmd+Q** cancels active synchronization, waits for cleanup, then quits. Start sync again after reopening to recover interrupted work.
 
 See [macOS development and verification](docs/macos.md) for toolchain setup, native tests, and release checks.
+
+## Android sync diagnostics
+
+Diagnostic logging is off by default. To investigate unexpected downloads, build
+with `--dart-define=SYNCTUNE_DIAGNOSTICS=true`. For the existing Android 10
+installation that uses a SAF tree, also pass
+`--dart-define=SYNCTUNE_DIAGNOSTICS_SAF=true` to preserve its SAF access route
+instead of switching to the newer direct-file adapter. This second flag only
+applies when diagnostics are enabled; keep the existing folder selection.
+
+Use the original signing key and a version code greater than the installed APK
+to update it while retaining its state. Do not uninstall the original app to
+work around a signing mismatch. For example, for installed version code 10:
+
+```sh
+flutter build apk --release --build-number=11 --dart-define=SYNCTUNE_DIAGNOSTICS=true --dart-define=SYNCTUNE_DIAGNOSTICS_SAF=true
+```
+
+Capture live events with `adb logcat -v raw -s SyncTuneDiagnostic:I`. Events are
+also saved as JSON lines in the app-specific external `files/diagnostics`
+directory, with one previous file retained and an 8 MiB limit per file. On the
+connected Android 10 device, retrieve these without root using:
+
+```sh
+adb pull /sdcard/Android/data/com.example.synctune/files/diagnostics ./synctune-diagnostics
+```
+
+Events include run and phase identifiers, relative paths, content hashes, file
+sizes and modification times, ETags, baseline/checkpoint reuse, sync decisions,
+and the purpose and completed byte count of each download. Download purposes
+distinguish scan hashing, transfer sources, recovery checks, backups, and upload
+verification. Logs omit credentials, URLs, authentication headers, and exception
+messages; they still contain song names and should be treated as private. Logging failures
+do not abort synchronization. To reproduce, first establish a completed sync,
+then favorite a song and start another sync without resetting sync history.

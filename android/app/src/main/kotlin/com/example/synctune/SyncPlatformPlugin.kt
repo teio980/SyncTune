@@ -18,6 +18,7 @@ import android.provider.DocumentsContract
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.Log
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -47,6 +48,7 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
     private val resolver: ContentResolver = context.contentResolver
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newFixedThreadPool(2)
+    private val diagnosticsIo = Executors.newSingleThreadExecutor()
     private val reads = ConcurrentHashMap<String, ReadSession>()
     private val cancellations = ConcurrentHashMap<String, AtomicBoolean>()
     private val stageOffsets = ConcurrentHashMap<String, Long>()
@@ -76,6 +78,7 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
         application.platformChannel = null
         reads.keys.toList().forEach(::closeRead)
         io.shutdownNow()
+        diagnosticsIo.shutdown()
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
@@ -159,6 +162,28 @@ class SyncPlatformPlugin(private val application: SyncTuneApplication) :
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "syncDiagnostic" -> {
+                val line = call.argument<String>("line")
+                if (line != null && line.length <= 16384 && !line.contains('\n')) {
+                    Log.i("SyncTuneDiagnostic", line)
+                    diagnosticsIo.execute {
+                        try {
+                            val dir = context.getExternalFilesDir("diagnostics") ?: return@execute
+                            dir.mkdirs()
+                            val file = File(dir, "sync.jsonl")
+                            if (file.length() + line.toByteArray(Charsets.UTF_8).size + 1 > 8 * 1024 * 1024) {
+                                val previous = File(dir, "sync.previous.jsonl")
+                                if (previous.exists() && !previous.delete()) return@execute
+                                if (!file.renameTo(previous)) return@execute
+                            }
+                            file.appendText("$line\n", Charsets.UTF_8)
+                        } catch (_: Exception) {
+                            // Diagnostics must never interrupt synchronization.
+                        }
+                    }
+                }
+                result.success(null)
+            }
             "stateDatabasePath" -> result.success(File(context.filesDir,
                 "synctune-state-v2.sqlite").absolutePath)
             "pickFolder" -> pickFolder(result)

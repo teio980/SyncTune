@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 
 import 'sync_model.dart';
+import 'sync_diagnostics.dart';
 
 abstract interface class LocalStore {
   String stageKey(String operationId);
@@ -271,6 +272,14 @@ final class FileLocalStore implements LocalStore {
           modifiedMs: modifiedMs,
         );
         if (reused != null) {
+          SyncDiagnostics.record('local_scan', {
+            'path': path.value,
+            'backend': 'file',
+            'size': stat.size,
+            'modifiedMs': modifiedMs,
+            'sha256': reused,
+            'reuse': 'checkpoint',
+          });
           files.add(
             SyncFile(
               path: path,
@@ -290,6 +299,15 @@ final class FileLocalStore implements LocalStore {
                   await onBytes(path, bytes);
                 },
         );
+        SyncDiagnostics.record('local_scan', {
+          'path': path.value,
+          'backend': 'file',
+          'size': digest.length,
+          'listedSize': stat.size,
+          'modifiedMs': modifiedMs,
+          'sha256': digest.sha256,
+          'reuse': 'none',
+        });
         if (checkpoint != null) {
           final after = await file.stat();
           if (after.size == digest.length &&

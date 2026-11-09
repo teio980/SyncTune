@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../sync/local_store.dart';
 import '../sync/sync_controller.dart';
+import '../sync/sync_diagnostics.dart';
 import '../sync/sync_model.dart';
 import '../sync/sync_platform.dart';
 
@@ -25,6 +26,16 @@ final class SyncPlatformAdapters
     : channel = channel ?? const MethodChannel('synctune/sync_platform');
 
   final MethodChannel channel;
+
+  void writeDiagnostic(String line) {
+    if (!Platform.isAndroid) return;
+    unawaited(
+      channel
+          .invokeMethod<void>('syncDiagnostic', {'line': line})
+          .catchError((Object _) {}),
+    );
+  }
+
   DateTime _lastNotificationUpdate = DateTime.fromMillisecondsSinceEpoch(0);
   SyncPhase? _lastNotifiedPhase;
   Future<void>? _windowCloseRequest;
@@ -131,6 +142,11 @@ final class SyncPlatformAdapters
   }
 
   static final Map<String, String> _resolvedPhysicalRoots = <String, String>{};
+  // Keep the installed APK's SAF route when reproducing its Android 10 issue.
+  // This switch has no effect in a normal build or for a direct file root.
+  static const _diagnosticSaf =
+      SyncDiagnostics.requested &&
+      bool.fromEnvironment('SYNCTUNE_DIAGNOSTICS_SAF');
 
   static bool _isDirectFilePath(String root) =>
       root.startsWith('/') || RegExp(r'^[A-Za-z]:[\\/]').hasMatch(root);
@@ -139,6 +155,7 @@ final class SyncPlatformAdapters
     final root = settings.localRoot;
     if (_isDirectFilePath(root)) return root;
     if (!Platform.isAndroid) return root;
+    if (_diagnosticSaf) return root;
     final cached = _resolvedPhysicalRoots[root];
     if (cached != null) return cached;
     try {
@@ -251,17 +268,28 @@ final class _ConfiguredLocalStore implements ConfigurableLocalStore {
 
   void _configure(SyncSettings settings) {
     if (_settings?.syncIdentity == settings.syncIdentity && _delegate != null) {
+      SyncDiagnostics.record('local_store', {
+        'backend': _delegate is _SafLocalStore ? 'saf' : 'file',
+        'cachedDelegate': true,
+        'diagnosticSaf': SyncPlatformAdapters._diagnosticSaf,
+      });
       return;
     }
     _settings = settings;
-    final cachedPhysical =
-        SyncPlatformAdapters._resolvedPhysicalRoots[settings.localRoot];
+    final cachedPhysical = SyncPlatformAdapters._diagnosticSaf
+        ? null
+        : SyncPlatformAdapters._resolvedPhysicalRoots[settings.localRoot];
     final root = cachedPhysical ?? settings.localRoot;
     final isDirectFile =
         !Platform.isAndroid || SyncPlatformAdapters._isDirectFilePath(root);
     _delegate = isDirectFile
         ? _desktopFileStore(channel, root)
         : _SafLocalStore(channel, settings.localRoot, settings.localGeneration);
+    SyncDiagnostics.record('local_store', {
+      'backend': isDirectFile ? 'file' : 'saf',
+      'resolvedFromTree': cachedPhysical != null,
+      'diagnosticSaf': SyncPlatformAdapters._diagnosticSaf,
+    });
   }
 
   LocalStore get _store =>
@@ -363,10 +391,20 @@ final class _SafLocalStore implements LocalStore {
     String method, [
     Map<String, Object?>? args,
   ]) async {
-    final result = await channel.invokeMapMethod<String, Object?>(
-      method,
-      <String, Object?>{..._scope, ...?args},
-    );
+    final Map<String, Object?>? result;
+    try {
+      result = await channel.invokeMapMethod<String, Object?>(
+        method,
+        <String, Object?>{..._scope, ...?args},
+      );
+    } on PlatformException catch (error) {
+      SyncDiagnostics.record('local_platform_error', {
+        'method': method,
+        'code': error.code,
+        'path': args?['path'],
+      });
+      rethrow;
+    }
     if (result == null) throw SyncFailure('$method returned no result.');
     return result;
   }
@@ -520,6 +558,14 @@ final class _SafLocalStore implements LocalStore {
         modifiedMs: listedModified.toInt(),
       );
       if (reused != null) {
+        SyncDiagnostics.record('local_scan', {
+          'path': path.value,
+          'backend': 'saf',
+          'size': listedSize.toInt(),
+          'modifiedMs': listedModified.toInt(),
+          'sha256': reused,
+          'reuse': 'checkpoint',
+        });
         files.add(
           SyncFile(
             path: path,
@@ -548,6 +594,17 @@ final class _SafLocalStore implements LocalStore {
         );
       }
       await onBytes?.call(path, size.toInt());
+      SyncDiagnostics.record('local_scan', {
+        'path': path.value,
+        'backend': 'saf',
+        'size': size.toInt(),
+        'listedSize': listedSize.toInt(),
+        'modifiedMs': modifiedMs.toInt(),
+        'listedModifiedMs': listedModified.toInt(),
+        'sha256': hash,
+        'stable': hashed['stable'] == true,
+        'reuse': 'none',
+      });
       if (hashed['stable'] == true) {
         checkpoint?.recordLocal(
           path,
