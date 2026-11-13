@@ -1,0 +1,138 @@
+name: Release SyncTune
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-android-windows:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.6
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build Android APK
+        run: flutter build apk --release
+
+      - name: Build Windows Desktop
+        run: flutter build windows --release
+
+      - name: Package Windows ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath dist\SyncTune-windows-x64.zip -Force
+
+      - name: Upload Android Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SyncTune-Android
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SyncTune-Windows
+          path: dist/SyncTune-windows-x64.zip
+
+  build-macos:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.6
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build and Package macOS Universal
+        run: scripts/package_macos.sh
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SyncTune-macOS
+          path: dist/SyncTune-macos-universal.zip
+
+  publish-release:
+    needs: [build-android-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Download Android Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SyncTune-Android
+          path: release-assets
+
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SyncTune-Windows
+          path: release-assets
+
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SyncTune-macOS
+          path: release-assets
+
+      - name: Rename and Prepare Files
+        run: |
+          cd release-assets
+          mv app-release.apk SyncTune-Android-release.apk
+          sha256sum * > SHA256SUMS.txt
+          ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/SyncTune-Android-release.apk
+            release-assets/SyncTune-windows-x64.zip
+            release-assets/SyncTune-macos-universal.zip
+            release-assets/SHA256SUMS.txt
+          name: SyncTune ${{ github.ref_name }}
+          body: |
+            ## Downloads
+
+            - **Android:** `SyncTune-Android-release.apk`
+            - **Windows (x64):** `SyncTune-windows-x64.zip`
+            - **macOS (Universal):** `SyncTune-macos-universal.zip`
+
+            ## Changes
+
+            - **FLAC Vorbis Comment Equivalence**: Normalize Vorbis comment field name casing and field ordering, treating metadata-reordered FLAC files as equivalent to prevent false conflict copies.
+            - **WebDAV Baseline Fast Reuse**: Unmodified FLAC files now directly reuse local baseline metadata, eliminating redundant multi-hundred-megabyte remote re-downloads and timeout issues.
+            - **Multi-Platform Baseline Persistence**: Persist audio equivalence hashes in local SQLite baseline database to guarantee instant scans across Android, macOS, and Windows.
+          draft: false
+          prerelease: false
