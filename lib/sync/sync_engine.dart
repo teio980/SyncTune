@@ -232,7 +232,7 @@ final class SyncEngine {
       networkBytesDone = 0;
       networkBytesTotal = plan.fold<int>(0, (sum, item) {
         final expected = item.sha256;
-        if (expected == null) return sum;
+        if (expected == null || item.equivalent) return sum;
         final needsLocal = local[item.path]?.sha256 != expected;
         final needsRemote = remote[item.path]?.sha256 != expected;
         var bytes = sum;
@@ -499,6 +499,24 @@ final class SyncEngine {
         path: desired.path,
       );
     }
+    if (desired.equivalent &&
+        local != null &&
+        remote != null &&
+        local.comparisonHash != null &&
+        local.comparisonHash == remote.comparisonHash) {
+      stateStore.saveUnchangedBaseline(
+        BaselineEntry(
+          path: desired.path,
+          sha256: local.sha256,
+          remoteSha256: remote.sha256,
+          comparisonHash: local.comparisonHash,
+          localModifiedMs: local.modifiedMs,
+          remoteEtag: remote.etag,
+          remoteSize: remote.size,
+        ),
+      );
+      return;
+    }
     if (desired.sha256 != null &&
         localHash == desired.sha256 &&
         remoteHash == desired.sha256) {
@@ -507,6 +525,7 @@ final class SyncEngine {
         BaselineEntry(
           path: desired.path,
           sha256: desired.sha256!,
+          comparisonHash: local?.comparisonHash,
           localModifiedMs: modified,
           remoteEtag: remote?.etag,
           remoteSize: remote?.size ?? desired.size,
@@ -996,14 +1015,34 @@ final class SyncEngine {
       cancellation.throwIfCancelled();
       final localHash = local[path]?.sha256;
       final remoteHash = remote[path]?.sha256;
-      final baselineHash = baseline[path]?.sha256;
+      final saved = baseline[path];
+      final equivalent =
+          localHash == remoteHash ||
+          (local[path]?.comparisonHash != null &&
+              local[path]?.comparisonHash == remote[path]?.comparisonHash);
       if (localHash == null ||
           remoteHash == null ||
-          localHash != remoteHash ||
-          localHash != baselineHash) {
+          !equivalent ||
+          localHash != saved?.sha256 ||
+          remoteHash != saved?.remoteSha256) {
         throw SyncFailure(
           'The file changed during final verification; start another manual sync.',
           path: path,
+        );
+      }
+      if (local[path]?.comparisonHash != null &&
+          local[path]?.comparisonHash == remote[path]?.comparisonHash &&
+          saved!.comparisonHash != local[path]!.comparisonHash) {
+        stateStore.saveUnchangedBaseline(
+          BaselineEntry(
+            path: path,
+            sha256: saved.sha256,
+            remoteSha256: saved.remoteSha256,
+            comparisonHash: local[path]!.comparisonHash,
+            localModifiedMs: saved.localModifiedMs,
+            remoteEtag: saved.remoteEtag,
+            remoteSize: saved.remoteSize,
+          ),
         );
       }
       verifiedFiles++;

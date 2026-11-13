@@ -172,9 +172,11 @@ final class SyncFile {
     this.modifiedMs = 0,
     this.etag,
     this.cachedFile,
+    this.comparisonHash,
   });
   final SyncPath path;
   final String sha256;
+  final String? comparisonHash;
   final int size;
   final int modifiedMs;
   final String? etag;
@@ -306,9 +308,13 @@ final class BaselineEntry {
     required this.localModifiedMs,
     required this.remoteEtag,
     required this.remoteSize,
-  });
+    String? remoteSha256,
+    this.comparisonHash,
+  }) : remoteSha256 = remoteSha256 ?? sha256;
   final SyncPath path;
   final String sha256;
+  final String remoteSha256;
+  final String? comparisonHash;
   final int localModifiedMs;
   final String? remoteEtag;
   final int remoteSize;

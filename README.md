@@ -18,6 +18,8 @@ SyncTune is a manual, two-way music synchronizer for Windows, Android, and macOS
 4. Open **Sync** and select **Start sync**. On Android, allow notifications so syncing can continue when the app is in the background or the screen is locked.
 5. Open **Music** to browse or refresh the local song list. To delete songs, select them and confirm. They are removed from this device immediately; songs already included in sync history are also removed from WebDAV on the next sync.
 
+FLAC files are compared using their audio and metadata, treating Vorbis comment field order and field-name capitalization as equivalent. Actual tag values, repeated-value order, audio, covers, and other metadata remain significant. Invalid or unsupported FLAC data falls back to an exact file comparison. Exact hashes are still used for transfer and recovery.
+
 The first sync merges songs already present in both folders and does not infer deletions. If different songs share a path, the WebDAV version keeps that path and SyncTune saves the local version as a conflict copy. On later syncs, additions, edits, and deletions are synchronized between the two folders.
 
 Use **Cancel sync** to pause and resume the same work later. Use **Force stop and reset** to abandon a stuck or interrupted run. It stops active sync work, clears pending operations, scan checkpoints, and sync history, and keeps your settings, music, and recovery copies. The next **Start sync** scans both folders from scratch and merges them like a first sync; songs deleted from only one side may be copied back from the other side. Recovery copies remain in internal storage and are excluded from normal music scans.

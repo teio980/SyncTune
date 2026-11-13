@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:xml/xml.dart';
 
+import 'flac_comparison.dart';
 import 'sync_model.dart';
 import 'sync_diagnostics.dart';
 
@@ -459,7 +460,12 @@ final class WebDavClient {
         final saved = baseline[path];
         onFile?.call(path.value);
         await onMusicFile?.call(path);
-        if (_isStrongEtag(etag) && saved?.remoteEtag == etag) {
+        final isFlac = path.name.toLowerCase().endsWith('.flac');
+        final canReuseBaseline =
+            _isStrongEtag(etag) &&
+            saved?.remoteEtag == etag &&
+            (!isFlac || saved?.comparisonHash != null);
+        if (canReuseBaseline) {
           SyncDiagnostics.record('remote_scan', {
             'path': path.value,
             'reuse': 'baseline',
@@ -470,15 +476,16 @@ final class WebDavClient {
           output.add(
             SyncFile(
               path: path,
-              sha256: saved!.sha256,
+              sha256: saved!.remoteSha256,
               size: entry.length ?? saved.remoteSize,
               etag: etag,
+              comparisonHash: saved.comparisonHash,
             ),
           );
           continue;
         }
         final listedLength = entry.length;
-        final checkpointed = _isStrongEtag(etag)
+        final checkpointed = !isFlac && _isStrongEtag(etag)
             ? checkpoint?.remoteFile(path, etag: etag!, size: listedLength)
             : null;
         if (checkpointed != null) {
@@ -542,6 +549,7 @@ final class WebDavClient {
             sha256: hashed.sha256,
             size: hashed.length,
             etag: hashed.etag ?? etag,
+            comparisonHash: hashed.comparisonHash,
           ),
         );
       }
@@ -868,10 +876,14 @@ final class WebDavClient {
     }
     final digests = _DigestSink();
     final converter = sha256.startChunkedConversion(digests);
+    final comparison = path.name.toLowerCase().endsWith('.flac')
+        ? FlacComparisonHasher()
+        : null;
     var length = 0;
     try {
       await _forEachChunk(body.stream, token, (chunk) async {
         converter.add(chunk);
+        comparison?.add(chunk);
         length += chunk.length;
         await onBytes?.call(chunk.length);
       });
@@ -929,7 +941,12 @@ final class WebDavClient {
       'sha256': digests.value.toString(),
       'etag': returnedEtag,
     });
-    return _HashResultWithEtag(digests.value.toString(), length, returnedEtag);
+    return _HashResultWithEtag(
+      digests.value.toString(),
+      length,
+      returnedEtag,
+      comparison?.close(),
+    );
   }
 
   Future<File> prepareSource(
@@ -975,7 +992,10 @@ final class WebDavClient {
     final metadata = await _metadata(settings, path, token);
     if (metadata == null) return null;
     final saved = baseline[path];
-    if (_isStrongEtag(metadata.etag) && saved?.remoteEtag == metadata.etag) {
+    final isFlac = path.name.toLowerCase().endsWith('.flac');
+    if (_isStrongEtag(metadata.etag) &&
+        saved?.remoteEtag == metadata.etag &&
+        (!isFlac || saved?.comparisonHash != null)) {
       SyncDiagnostics.record('remote_inspect', {
         'path': path.value,
         'purpose': purpose,
@@ -985,9 +1005,10 @@ final class WebDavClient {
       });
       return SyncFile(
         path: path,
-        sha256: saved!.sha256,
+        sha256: saved!.remoteSha256,
         size: metadata.length ?? saved.remoteSize,
         etag: metadata.etag,
+        comparisonHash: saved.comparisonHash,
       );
     }
     final read = await _hashRemote(
@@ -1003,6 +1024,7 @@ final class WebDavClient {
       sha256: read.sha256,
       size: read.length,
       etag: read.etag ?? metadata.etag,
+      comparisonHash: read.comparisonHash,
     );
   }
 
@@ -1557,10 +1579,16 @@ final class _RemoteMetadata {
 }
 
 final class _HashResultWithEtag {
-  const _HashResultWithEtag(this.sha256, this.length, this.etag);
+  const _HashResultWithEtag(
+    this.sha256,
+    this.length,
+    this.etag, [
+    this.comparisonHash,
+  ]);
   final String sha256;
   final int length;
   final String? etag;
+  final String? comparisonHash;
 }
 
 final class _DavEntry {

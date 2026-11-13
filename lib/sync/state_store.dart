@@ -33,7 +33,9 @@ final class SqliteStateStore {
       sha256 TEXT NOT NULL,
       local_modified_ms INTEGER NOT NULL,
       remote_etag TEXT,
-      remote_size INTEGER NOT NULL
+      remote_size INTEGER NOT NULL,
+      remote_sha256 TEXT,
+      comparison_sha256 TEXT
     )''');
     db.execute('''CREATE TABLE IF NOT EXISTS pending_operations (
       operation_id TEXT PRIMARY KEY NOT NULL,
@@ -65,6 +67,16 @@ final class SqliteStateStore {
       etag TEXT,
       PRIMARY KEY (side, relative_path)
     )''');
+    final baselineColumns = db
+        .select('PRAGMA table_info(baseline)')
+        .map((row) => row['name'] as String)
+        .toSet();
+    if (!baselineColumns.contains('remote_sha256')) {
+      db.execute('ALTER TABLE baseline ADD COLUMN remote_sha256 TEXT');
+    }
+    if (!baselineColumns.contains('comparison_sha256')) {
+      db.execute('ALTER TABLE baseline ADD COLUMN comparison_sha256 TEXT');
+    }
     _database = db;
   }
 
@@ -123,8 +135,13 @@ final class SqliteStateStore {
           .select('PRAGMA table_info($name)')
           .map((row) => row['name'] as String)
           .toSet();
-      if (columns.length != expected[name]!.length ||
-          !columns.containsAll(expected[name]!)) {
+      final allowed = <String>{
+        ...expected[name]!,
+        if (name == 'baseline') 'remote_sha256',
+        if (name == 'baseline') 'comparison_sha256',
+      };
+      if (!columns.containsAll(expected[name]!) ||
+          !allowed.containsAll(columns)) {
         throw const SyncFailure(
           'This is not a new SyncTune state database. Choose a fresh version 2 database; old state is not migrated.',
         );
@@ -239,7 +256,7 @@ final class SqliteStateStore {
   Map<SyncPath, BaselineEntry> loadBaseline() {
     final result = <SyncPath, BaselineEntry>{};
     for (final row in _db.select(
-      'SELECT relative_path,sha256,local_modified_ms,remote_etag,remote_size FROM baseline',
+      'SELECT relative_path,sha256,local_modified_ms,remote_etag,remote_size,remote_sha256,comparison_sha256 FROM baseline',
     )) {
       final path = SyncPath.parse(row['relative_path'] as String);
       result[path] = BaselineEntry(
@@ -248,6 +265,8 @@ final class SqliteStateStore {
         localModifiedMs: row['local_modified_ms'] as int,
         remoteEtag: row['remote_etag'] as String?,
         remoteSize: row['remote_size'] as int,
+        remoteSha256: row['remote_sha256'] as String?,
+        comparisonHash: row['comparison_sha256'] as String?,
       );
     }
     return result;
@@ -400,16 +419,18 @@ final class SqliteStateStore {
         );
       } else {
         _db.execute(
-          '''INSERT INTO baseline(relative_path,sha256,local_modified_ms,remote_etag,remote_size)
-          VALUES(?,?,?,?,?) ON CONFLICT(relative_path) DO UPDATE SET
+          '''INSERT INTO baseline(relative_path,sha256,local_modified_ms,remote_etag,remote_size,remote_sha256,comparison_sha256)
+          VALUES(?,?,?,?,?,?,?) ON CONFLICT(relative_path) DO UPDATE SET
           sha256=excluded.sha256,local_modified_ms=excluded.local_modified_ms,
-          remote_etag=excluded.remote_etag,remote_size=excluded.remote_size''',
+          remote_etag=excluded.remote_etag,remote_size=excluded.remote_size,remote_sha256=excluded.remote_sha256,comparison_sha256=excluded.comparison_sha256''',
           <Object?>[
             entry.path.value,
             entry.sha256,
             entry.localModifiedMs,
             entry.remoteEtag,
             entry.remoteSize,
+            entry.remoteSha256,
+            entry.comparisonHash,
           ],
         );
       }
@@ -428,16 +449,18 @@ final class SqliteStateStore {
     _db.execute('BEGIN IMMEDIATE');
     try {
       _db.execute(
-        '''INSERT INTO baseline(relative_path,sha256,local_modified_ms,remote_etag,remote_size)
-      VALUES(?,?,?,?,?) ON CONFLICT(relative_path) DO UPDATE SET
+        '''INSERT INTO baseline(relative_path,sha256,local_modified_ms,remote_etag,remote_size,remote_sha256,comparison_sha256)
+      VALUES(?,?,?,?,?,?,?) ON CONFLICT(relative_path) DO UPDATE SET
       sha256=excluded.sha256,local_modified_ms=excluded.local_modified_ms,
-      remote_etag=excluded.remote_etag,remote_size=excluded.remote_size''',
+      remote_etag=excluded.remote_etag,remote_size=excluded.remote_size,remote_sha256=excluded.remote_sha256,comparison_sha256=excluded.comparison_sha256''',
         <Object?>[
           entry.path.value,
           entry.sha256,
           entry.localModifiedMs,
           entry.remoteEtag,
           entry.remoteSize,
+          entry.remoteSha256,
+          entry.comparisonHash,
         ],
       );
       _db.execute('COMMIT');

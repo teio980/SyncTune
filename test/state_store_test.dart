@@ -105,6 +105,35 @@ void main() {
     },
   );
 
+  test('existing v2 baselines migrate without losing their hashes', () async {
+    final path = '${directory.path}/existing.sqlite';
+    final old = sqlite3.open(path);
+    old.execute(
+      'CREATE TABLE baseline (relative_path TEXT PRIMARY KEY NOT NULL, sha256 TEXT NOT NULL, local_modified_ms INTEGER NOT NULL, remote_etag TEXT, remote_size INTEGER NOT NULL)',
+    );
+    final hash = 'a' * 64;
+    old.execute('INSERT INTO baseline VALUES(?,?,?,?,?)', [
+      'song.flac',
+      hash,
+      123,
+      '"etag"',
+      55,
+    ]);
+    old.close();
+    final state = SqliteStateStore(path);
+    await state.open();
+    final entry = state.loadBaseline()[SyncPath.parse('song.flac')]!;
+    expect(entry.sha256, hash);
+    expect(entry.remoteSha256, hash);
+    expect(entry.comparisonHash, isNull);
+    expect(entry.remoteEtag, '"etag"');
+    state.close();
+    final reopened = SqliteStateStore(path);
+    await reopened.open();
+    expect(reopened.loadBaseline().length, 1);
+    reopened.close();
+  });
+
   test('legacy database tables are rejected without migration', () async {
     final path = '${directory.path}${Platform.pathSeparator}old.sqlite';
     final oldDatabase = sqlite3.open(path);

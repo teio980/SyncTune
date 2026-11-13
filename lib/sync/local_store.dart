@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
+import 'flac_comparison.dart';
 import 'sync_model.dart';
 import 'sync_diagnostics.dart';
 
@@ -266,11 +267,14 @@ final class FileLocalStore implements LocalStore {
         final file = File(entity.path);
         final stat = await file.stat();
         final modifiedMs = stat.modified.millisecondsSinceEpoch;
-        final reused = checkpoint?.localHash(
-          path,
-          size: stat.size,
-          modifiedMs: modifiedMs,
-        );
+        final isFlac = path.name.toLowerCase().endsWith('.flac');
+        final reused = isFlac
+            ? null
+            : checkpoint?.localHash(
+                path,
+                size: stat.size,
+                modifiedMs: modifiedMs,
+              );
         if (reused != null) {
           SyncDiagnostics.record('local_scan', {
             'path': path.value,
@@ -293,6 +297,7 @@ final class FileLocalStore implements LocalStore {
         final digest = await _hashStream(
           file.openRead(),
           token,
+          flac: isFlac,
           onBytes: onBytes == null
               ? null
               : (bytes) async {
@@ -327,6 +332,7 @@ final class FileLocalStore implements LocalStore {
             sha256: digest.sha256,
             size: digest.length,
             modifiedMs: modifiedMs,
+            comparisonHash: digest.comparisonHash,
           ),
         );
       }
@@ -829,25 +835,29 @@ final class _DigestSink implements Sink<Digest> {
 }
 
 final class _HashedContent {
-  const _HashedContent(this.sha256, this.length);
+  const _HashedContent(this.sha256, this.length, this.comparisonHash);
   final String sha256;
   final int length;
+  final String? comparisonHash;
 }
 
 Future<_HashedContent> _hashStream(
   Stream<List<int>> stream,
   CancellationToken token, {
   Future<void> Function(int bytes)? onBytes,
+  bool flac = false,
 }) async {
   final sink = _DigestSink();
   final converter = sha256.startChunkedConversion(sink);
+  final comparison = flac ? FlacComparisonHasher() : null;
   var length = 0;
   await for (final chunk in stream) {
     token.throwIfCancelled();
     converter.add(chunk);
+    comparison?.add(chunk);
     length += chunk.length;
     await onBytes?.call(chunk.length);
   }
   converter.close();
-  return _HashedContent(sink.value.toString(), length);
+  return _HashedContent(sink.value.toString(), length, comparison?.close());
 }

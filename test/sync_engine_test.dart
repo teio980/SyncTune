@@ -10,6 +10,8 @@ import 'package:synctune/sync/sync_diagnostics.dart';
 import 'package:synctune/sync/sync_model.dart';
 import 'package:synctune/sync/webdav_client.dart';
 
+import 'flac_test_data.dart';
+
 void main() {
   late Directory directory;
   late MemoryWebDav server;
@@ -34,6 +36,102 @@ void main() {
     SyncDiagnostics.writer = null;
     await server.close();
     await directory.delete(recursive: true);
+  });
+
+  test(
+    'equivalent FLAC preserves both sides and tracks later real edits',
+    () async {
+      final state = SqliteStateStore('${directory.path}/flac.sqlite');
+      await state.open();
+      addTearDown(state.close);
+      final engine = SyncEngine(
+        localStore: FileLocalStore(settings.localRoot),
+        webDav: WebDavClient(),
+        stateStore: state,
+      );
+      final file = File('${settings.localRoot}/song.flac');
+      final local = testFlac(['TITLE=Song', 'artist=Artist']);
+      final remote = testFlac(['ARTIST=Artist', 'title=Song']);
+      await file.writeAsBytes(local);
+      server.set('song.flac', remote);
+      await _run(engine, settings);
+      expect(await file.readAsBytes(), local);
+      expect(server.read('song.flac'), remote);
+      expect(server.mutations, isEmpty);
+      final baseline = state.loadBaseline()[SyncPath.parse('song.flac')]!;
+      expect(baseline.sha256, hashBytes(local));
+      expect(baseline.remoteSha256, hashBytes(remote));
+      expect(baseline.comparisonHash, isNotNull);
+      await _run(engine, settings);
+      expect(server.mutations, isEmpty);
+      expect(await file.readAsBytes(), local);
+
+      final localEdit = testFlac(['TITLE=Changed', 'ARTIST=Artist']);
+      await file.writeAsBytes(localEdit);
+      await _run(engine, settings);
+      expect(server.read('song.flac'), localEdit);
+      expect(await file.readAsBytes(), localEdit);
+
+      final remoteEdit = testFlac(['TITLE=Remote', 'ARTIST=Artist']);
+      server.set('song.flac', remoteEdit);
+      await _run(engine, settings);
+      expect(await file.readAsBytes(), remoteEdit);
+      expect(server.read('song.flac'), remoteEdit);
+    },
+  );
+
+  test(
+    'tag reordering does not mask a simultaneous real remote edit',
+    () async {
+      final state = SqliteStateStore(
+        '${directory.path}/flac-concurrent.sqlite',
+      );
+      await state.open();
+      addTearDown(state.close);
+      final engine = SyncEngine(
+        localStore: FileLocalStore(settings.localRoot),
+        webDav: WebDavClient(),
+        stateStore: state,
+      );
+      final file = File('${settings.localRoot}/song.flac');
+      final initial = testFlac(['TITLE=Song', 'ARTIST=A']);
+      await file.writeAsBytes(initial);
+      server.set('song.flac', initial);
+      await _run(engine, settings);
+      await file.writeAsBytes(testFlac(['artist=A', 'title=Song']));
+      final remoteEdit = testFlac(['ARTIST=A', 'TITLE=Changed']);
+      server.set('song.flac', remoteEdit);
+      await _run(engine, settings);
+      expect(await file.readAsBytes(), remoteEdit);
+      expect(server.read('song.flac'), remoteEdit);
+      expect(
+        Directory(settings.localRoot)
+            .listSync()
+            .where((e) => e.path.contains('conflict')),
+        isEmpty,
+      );
+    },
+  );
+
+  test('distinct FLAC audio still creates a conflict copy', () async {
+    final state = SqliteStateStore('${directory.path}/flac-conflict.sqlite');
+    await state.open();
+    addTearDown(state.close);
+    final engine = SyncEngine(
+      localStore: FileLocalStore(settings.localRoot),
+      webDav: WebDavClient(),
+      stateStore: state,
+    );
+    final local = testFlac(['TITLE=Song'], audio: [1, 2, 3]);
+    final remote = testFlac(['TITLE=Song'], audio: [1, 2, 4]);
+    final file = File('${settings.localRoot}/song.flac');
+    await file.writeAsBytes(local);
+    server.set('song.flac', remote);
+    await _run(engine, settings);
+    expect(await file.readAsBytes(), remote);
+    final conflict = 'song (SyncTune conflict ${hashBytes(local)}).flac';
+    expect(await File('${settings.localRoot}/$conflict').readAsBytes(), local);
+    expect(server.read(conflict), local);
   });
 
   test(

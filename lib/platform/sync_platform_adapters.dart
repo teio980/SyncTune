@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 
+import '../sync/flac_comparison.dart';
 import '../sync/local_store.dart';
 import '../sync/sync_controller.dart';
 import '../sync/sync_diagnostics.dart';
@@ -552,6 +553,53 @@ final class _SafLocalStore implements LocalStore {
         );
       }
       await onFile?.call(path);
+      if (path.name.toLowerCase().endsWith('.flac')) {
+        final before = await _call('safStat', <String, Object?>{
+          'path': path.value,
+        });
+        if (before['exists'] != true ||
+            before['size'] != listedSize ||
+            before['modifiedMs'] != listedModified) {
+          throw SyncFailure(
+            'The local file changed while scanning.',
+            path: path,
+          );
+        }
+        final digestSink = _DigestSink();
+        final digest = sha256.startChunkedConversion(digestSink);
+        final comparison = FlacComparisonHasher();
+        var length = 0;
+        await for (final chunk in await read(path, token)) {
+          token.throwIfCancelled();
+          digest.add(chunk);
+          comparison.add(chunk);
+          length += chunk.length;
+          await onBytes?.call(path, chunk.length);
+        }
+        digest.close();
+        final after = await _call('safStat', <String, Object?>{
+          'path': path.value,
+        });
+        if (after['exists'] != true ||
+            after['size'] != length ||
+            after['size'] != before['size'] ||
+            after['modifiedMs'] != before['modifiedMs']) {
+          throw SyncFailure(
+            'The local file changed while scanning.',
+            path: path,
+          );
+        }
+        files.add(
+          SyncFile(
+            path: path,
+            sha256: digestSink.value.toString(),
+            size: length,
+            modifiedMs: listedModified.toInt(),
+            comparisonHash: comparison.close(),
+          ),
+        );
+        continue;
+      }
       final reused = checkpoint?.localHash(
         path,
         size: listedSize.toInt(),

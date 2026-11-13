@@ -15,6 +15,7 @@ final class DesiredPath {
     required this.previousRemoteHash,
     required this.localModifiedMs,
     required this.remoteEtag,
+    this.equivalent = false,
   });
   final SyncPath path;
   final String? sha256;
@@ -25,6 +26,7 @@ final class DesiredPath {
   final String? previousRemoteHash;
   final int localModifiedMs;
   final String? remoteEtag;
+  final bool equivalent;
 }
 
 final class SyncPlanner {
@@ -52,6 +54,23 @@ final class SyncPlanner {
       final l = local[path];
       final r = remote[path];
       final b = baseline[path];
+      if (l != null &&
+          r != null &&
+          l.sha256 != r.sha256 &&
+          l.comparisonHash != null &&
+          l.comparisonHash == r.comparisonHash) {
+        result[path] = _entry(
+          path,
+          l,
+          l.sha256,
+          ContentSide.local,
+          path,
+          l,
+          r,
+          equivalent: true,
+        );
+        continue;
+      }
       if (b == null) {
         if (l == null && r == null) continue;
         if (l == null) {
@@ -134,8 +153,12 @@ final class SyncPlanner {
         result[path] = _entry(path, l, l.sha256, ContentSide.local, path, l, r);
         continue;
       }
-      final localChanged = l.sha256 != b.sha256;
-      final remoteChanged = r.sha256 != b.sha256;
+      final localChanged = b.comparisonHash != null && l.comparisonHash != null
+          ? l.comparisonHash != b.comparisonHash
+          : l.sha256 != b.sha256;
+      final remoteChanged = b.comparisonHash != null && r.comparisonHash != null
+          ? r.comparisonHash != b.comparisonHash
+          : r.sha256 != b.remoteSha256;
       if (localChanged && remoteChanged) {
         final conflict = _allocateConflict(
           path,
@@ -203,8 +226,9 @@ final class SyncPlanner {
     ContentSide? side,
     SyncPath? sourcePath,
     SyncFile? local,
-    SyncFile? remote,
-  ) => DesiredPath(
+    SyncFile? remote, {
+    bool equivalent = false,
+  }) => DesiredPath(
     path: path,
     sha256: hash,
     size: winner?.size ?? 0,
@@ -214,6 +238,7 @@ final class SyncPlanner {
     previousRemoteHash: remote?.sha256,
     localModifiedMs: local?.modifiedMs ?? winner?.modifiedMs ?? 0,
     remoteEtag: remote?.etag,
+    equivalent: equivalent,
   );
 
   SyncPath _allocateConflict(
