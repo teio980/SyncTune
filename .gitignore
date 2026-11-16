@@ -41,6 +41,10 @@ keystore.properties
 *.pfx
 *.local
 
+# Personal Apple Music import tools
+/scripts/import_external_music.command
+/scripts/import_external_music.py
+
 # Machine-specific Gradle JVM selection
 **/gradle-daemon-jvm.properties
 
