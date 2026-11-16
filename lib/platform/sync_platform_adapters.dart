@@ -320,11 +320,13 @@ final class _ConfiguredLocalStore implements ConfigurableLocalStore {
     SyncByteProgress? onBytes,
     SyncFileProgress? onFile,
     ScanCheckpoint? checkpoint,
+    Map<SyncPath, BaselineEntry>? baseline,
   }) => _store.scan(
     token,
     onBytes: onBytes,
     onFile: onFile,
     checkpoint: checkpoint,
+    baseline: baseline,
   );
   @override
   Future<Stream<List<int>>> read(SyncPath path, CancellationToken token) =>
@@ -492,6 +494,7 @@ final class _SafLocalStore implements LocalStore {
     SyncByteProgress? onBytes,
     SyncFileProgress? onFile,
     ScanCheckpoint? checkpoint,
+    Map<SyncPath, BaselineEntry>? baseline,
   }) async {
     final response = await _callCancellable(
       'safScanList',
@@ -553,7 +556,65 @@ final class _SafLocalStore implements LocalStore {
         );
       }
       await onFile?.call(path);
-      if (path.name.toLowerCase().endsWith('.flac')) {
+      final expectedSize = listedSize.toInt();
+      final expectedModified = listedModified.toInt();
+      final isFlac = path.name.toLowerCase().endsWith('.flac');
+      final saved = baseline?[path];
+      final canReuseBaseline =
+          saved != null &&
+          expectedSize >= 0 &&
+          saved.localSize != null &&
+          saved.localSize == expectedSize &&
+          saved.localModifiedMs > 0 &&
+          saved.localModifiedMs == expectedModified &&
+          (!isFlac || saved.comparisonHash != null);
+      if (canReuseBaseline) {
+        SyncDiagnostics.record('local_scan', {
+          'path': path.value,
+          'backend': 'saf',
+          'size': expectedSize,
+          'modifiedMs': expectedModified,
+          'sha256': saved.sha256,
+          'reuse': 'baseline',
+        });
+        files.add(
+          SyncFile(
+            path: path,
+            sha256: saved.sha256,
+            size: expectedSize,
+            modifiedMs: expectedModified,
+            comparisonHash: saved.comparisonHash,
+          ),
+        );
+        continue;
+      }
+      final checkpointed = checkpoint?.localFile(
+        path,
+        size: expectedSize,
+        modifiedMs: expectedModified,
+        requireComparisonHash: isFlac,
+      );
+      if (checkpointed != null) {
+        SyncDiagnostics.record('local_scan', {
+          'path': path.value,
+          'backend': 'saf',
+          'size': expectedSize,
+          'modifiedMs': expectedModified,
+          'sha256': checkpointed.sha256,
+          'reuse': 'checkpoint',
+        });
+        files.add(
+          SyncFile(
+            path: path,
+            sha256: checkpointed.sha256,
+            size: expectedSize,
+            modifiedMs: expectedModified,
+            comparisonHash: checkpointed.comparisonHash,
+          ),
+        );
+        continue;
+      }
+      if (isFlac) {
         final before = await _call('safStat', <String, Object?>{
           'path': path.value,
         });
@@ -589,37 +650,33 @@ final class _SafLocalStore implements LocalStore {
             path: path,
           );
         }
-        files.add(
-          SyncFile(
-            path: path,
-            sha256: digestSink.value.toString(),
-            size: length,
-            modifiedMs: listedModified.toInt(),
-            comparisonHash: comparison.close(),
-          ),
-        );
-        continue;
-      }
-      final reused = checkpoint?.localHash(
-        path,
-        size: listedSize.toInt(),
-        modifiedMs: listedModified.toInt(),
-      );
-      if (reused != null) {
+        final sha256Hex = digestSink.value.toString();
+        final comparisonHash = comparison.close();
         SyncDiagnostics.record('local_scan', {
           'path': path.value,
           'backend': 'saf',
-          'size': listedSize.toInt(),
-          'modifiedMs': listedModified.toInt(),
-          'sha256': reused,
-          'reuse': 'checkpoint',
+          'size': length,
+          'listedSize': expectedSize,
+          'modifiedMs': expectedModified,
+          'listedModifiedMs': expectedModified,
+          'sha256': sha256Hex,
+          'stable': true,
+          'reuse': 'none',
         });
+        checkpoint?.recordLocal(
+          path,
+          sha256: sha256Hex,
+          size: length,
+          modifiedMs: expectedModified,
+          comparisonHash: comparisonHash,
+        );
         files.add(
           SyncFile(
             path: path,
-            sha256: reused,
-            size: listedSize.toInt(),
-            modifiedMs: listedModified.toInt(),
+            sha256: sha256Hex,
+            size: length,
+            modifiedMs: expectedModified,
+            comparisonHash: comparisonHash,
           ),
         );
         continue;
@@ -646,9 +703,9 @@ final class _SafLocalStore implements LocalStore {
         'path': path.value,
         'backend': 'saf',
         'size': size.toInt(),
-        'listedSize': listedSize.toInt(),
+        'listedSize': expectedSize,
         'modifiedMs': modifiedMs.toInt(),
-        'listedModifiedMs': listedModified.toInt(),
+        'listedModifiedMs': expectedModified,
         'sha256': hash,
         'stable': hashed['stable'] == true,
         'reuse': 'none',

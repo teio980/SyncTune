@@ -126,12 +126,58 @@ void main() {
     expect(entry.sha256, hash);
     expect(entry.remoteSha256, hash);
     expect(entry.comparisonHash, isNull);
+    expect(entry.localSize, isNull);
     expect(entry.remoteEtag, '"etag"');
+    state.saveUnchangedBaseline(
+      BaselineEntry(
+        path: SyncPath.parse('song.flac'),
+        sha256: hash,
+        localSize: 55,
+        localModifiedMs: 123,
+        remoteEtag: '"etag"',
+        remoteSize: 55,
+        comparisonHash: 'b' * 64,
+      ),
+    );
     state.close();
     final reopened = SqliteStateStore(path);
     await reopened.open();
-    expect(reopened.loadBaseline().length, 1);
+    final updated = reopened.loadBaseline()[SyncPath.parse('song.flac')]!;
+    expect(updated.localSize, 55);
+    expect(updated.comparisonHash, 'b' * 64);
     reopened.close();
+  });
+
+  test('existing v2 scan_checkpoint migrates and persists FLAC comparison hashes', () async {
+    final path = '${directory.path}/checkpoint-migrate.sqlite';
+    final old = sqlite3.open(path);
+    old.execute(
+      'CREATE TABLE scan_checkpoint (side TEXT NOT NULL, relative_path TEXT NOT NULL, sha256 TEXT NOT NULL, size INTEGER NOT NULL, modified_ms INTEGER NOT NULL, etag TEXT, PRIMARY KEY (side, relative_path))',
+    );
+    old.close();
+
+    final state = SqliteStateStore(path);
+    await state.open();
+    addTearDown(state.close);
+    final sha = 'c' * 64;
+    final comp = 'd' * 64;
+    state.scanCheckpoint(reuse: false).recordLocal(
+      SyncPath.parse('track.flac'),
+      sha256: sha,
+      size: 2048,
+      modifiedMs: 999,
+      comparisonHash: comp,
+    );
+
+    final reused = state.scanCheckpoint(reuse: true);
+    final hit = reused.localFile(
+      SyncPath.parse('track.flac'),
+      size: 2048,
+      modifiedMs: 999,
+      requireComparisonHash: true,
+    );
+    expect(hit?.sha256, sha);
+    expect(hit?.comparisonHash, comp);
   });
 
   test('legacy database tables are rejected without migration', () async {

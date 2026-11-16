@@ -214,6 +214,12 @@ abstract interface class ScanCheckpoint {
     required int size,
     required int modifiedMs,
   });
+  ({String sha256, String? comparisonHash})? localFile(
+    SyncPath path, {
+    required int size,
+    required int modifiedMs,
+    bool requireComparisonHash = false,
+  });
   ({String sha256, int size})? remoteFile(
     SyncPath path, {
     required String etag,
@@ -224,6 +230,7 @@ abstract interface class ScanCheckpoint {
     required String sha256,
     required int size,
     required int modifiedMs,
+    String? comparisonHash,
   });
   void recordRemote(
     SyncPath path, {
@@ -308,6 +315,7 @@ final class BaselineEntry {
     required this.localModifiedMs,
     required this.remoteEtag,
     required this.remoteSize,
+    this.localSize,
     String? remoteSha256,
     this.comparisonHash,
   }) : remoteSha256 = remoteSha256 ?? sha256;
@@ -315,6 +323,7 @@ final class BaselineEntry {
   final String sha256;
   final String remoteSha256;
   final String? comparisonHash;
+  final int? localSize;
   final int localModifiedMs;
   final String? remoteEtag;
   final int remoteSize;

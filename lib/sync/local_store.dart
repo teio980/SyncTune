@@ -23,6 +23,7 @@ abstract interface class LocalStore {
     SyncByteProgress? onBytes,
     SyncFileProgress? onFile,
     ScanCheckpoint? checkpoint,
+    Map<SyncPath, BaselineEntry>? baseline,
   });
   Future<Stream<List<int>>> read(SyncPath path, CancellationToken token);
   Future<String?> hash(SyncPath path, CancellationToken token);
@@ -200,6 +201,7 @@ final class FileLocalStore implements LocalStore {
     SyncByteProgress? onBytes,
     SyncFileProgress? onFile,
     ScanCheckpoint? checkpoint,
+    Map<SyncPath, BaselineEntry>? baseline,
   }) async {
     if (await isReparsePoint?.call(root.path) == true) {
       throw const SyncFailure(
@@ -268,28 +270,57 @@ final class FileLocalStore implements LocalStore {
         final stat = await file.stat();
         final modifiedMs = stat.modified.millisecondsSinceEpoch;
         final isFlac = path.name.toLowerCase().endsWith('.flac');
-        final reused = isFlac
-            ? null
-            : checkpoint?.localHash(
-                path,
-                size: stat.size,
-                modifiedMs: modifiedMs,
-              );
-        if (reused != null) {
+        final saved = baseline?[path];
+        final canReuseBaseline =
+            saved != null &&
+            stat.size >= 0 &&
+            saved.localSize != null &&
+            saved.localSize == stat.size &&
+            saved.localModifiedMs > 0 &&
+            saved.localModifiedMs == modifiedMs &&
+            (!isFlac || saved.comparisonHash != null);
+        if (canReuseBaseline) {
           SyncDiagnostics.record('local_scan', {
             'path': path.value,
             'backend': 'file',
             'size': stat.size,
             'modifiedMs': modifiedMs,
-            'sha256': reused,
+            'sha256': saved.sha256,
+            'reuse': 'baseline',
+          });
+          files.add(
+            SyncFile(
+              path: path,
+              sha256: saved.sha256,
+              size: stat.size,
+              modifiedMs: modifiedMs,
+              comparisonHash: saved.comparisonHash,
+            ),
+          );
+          continue;
+        }
+        final checkpointed = checkpoint?.localFile(
+          path,
+          size: stat.size,
+          modifiedMs: modifiedMs,
+          requireComparisonHash: isFlac,
+        );
+        if (checkpointed != null) {
+          SyncDiagnostics.record('local_scan', {
+            'path': path.value,
+            'backend': 'file',
+            'size': stat.size,
+            'modifiedMs': modifiedMs,
+            'sha256': checkpointed.sha256,
             'reuse': 'checkpoint',
           });
           files.add(
             SyncFile(
               path: path,
-              sha256: reused,
+              sha256: checkpointed.sha256,
               size: stat.size,
               modifiedMs: modifiedMs,
+              comparisonHash: checkpointed.comparisonHash,
             ),
           );
           continue;
@@ -323,6 +354,7 @@ final class FileLocalStore implements LocalStore {
               sha256: digest.sha256,
               size: digest.length,
               modifiedMs: modifiedMs,
+              comparisonHash: digest.comparisonHash,
             );
           }
         }

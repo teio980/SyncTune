@@ -842,6 +842,55 @@ void main() {
       },
     );
   }
+
+  test(
+    'subsequent sync scans reuse local baseline without rereading unchanged MP3 and FLAC files',
+    () async {
+      final state = SqliteStateStore('${directory.path}/reuse-local.sqlite');
+      await state.open();
+      addTearDown(state.close);
+      final engine = SyncEngine(
+        localStore: FileLocalStore(settings.localRoot),
+        webDav: WebDavClient(),
+        stateStore: state,
+      );
+      final mp3 = File('${settings.localRoot}/song.mp3');
+      final flac = File('${settings.localRoot}/song.flac');
+      await mp3.writeAsString('unchanged mp3');
+      await flac.writeAsBytes(testFlac(['TITLE=Song', 'ARTIST=Artist']));
+
+      await _run(engine, settings);
+      expect(state.loadBaseline()[SyncPath.parse('song.mp3')]?.localSize, 13);
+      expect(
+        state.loadBaseline()[SyncPath.parse('song.flac')]?.comparisonHash,
+        isNotNull,
+      );
+
+      final lines = <String>[];
+      SyncDiagnostics.writer = lines.add;
+      addTearDown(() => SyncDiagnostics.writer = null);
+      final progress = <SyncProgress>[];
+      await engine.run(
+        settings,
+        secret: 'test-secret',
+        cancellation: CancellationToken(),
+        onProgress: progress.add,
+      );
+
+      final scanning = progress.where((p) => p.phase == SyncPhase.scanning);
+      expect(scanning, isNotEmpty);
+      expect(scanning.every((p) => p.bytesDone == 0), isTrue);
+
+      final events = lines
+          .map((s) => jsonDecode(s) as Map<String, dynamic>)
+          .toList();
+      final localScanEvents = events
+          .where((e) => e['event'] == 'local_scan' && e['phase'] == 'scanning')
+          .toList();
+      expect(localScanEvents, hasLength(2));
+      expect(localScanEvents.every((e) => e['reuse'] == 'baseline'), isTrue);
+    },
+  );
 }
 
 Future<void> _run(SyncEngine engine, SyncSettings settings) => engine.run(
@@ -877,11 +926,13 @@ final class _CrashAfterCommitOnce implements LocalStore {
     SyncByteProgress? onBytes,
     SyncFileProgress? onFile,
     ScanCheckpoint? checkpoint,
+    Map<SyncPath, BaselineEntry>? baseline,
   }) => delegate.scan(
     token,
     onBytes: onBytes,
     onFile: onFile,
     checkpoint: checkpoint,
+    baseline: baseline,
   );
   @override
   Future<Stream<List<int>>> read(SyncPath path, CancellationToken token) =>

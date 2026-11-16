@@ -35,7 +35,8 @@ final class SqliteStateStore {
       remote_etag TEXT,
       remote_size INTEGER NOT NULL,
       remote_sha256 TEXT,
-      comparison_sha256 TEXT
+      comparison_sha256 TEXT,
+      local_size INTEGER
     )''');
     db.execute('''CREATE TABLE IF NOT EXISTS pending_operations (
       operation_id TEXT PRIMARY KEY NOT NULL,
@@ -65,6 +66,7 @@ final class SqliteStateStore {
       size INTEGER NOT NULL,
       modified_ms INTEGER NOT NULL,
       etag TEXT,
+      comparison_sha256 TEXT,
       PRIMARY KEY (side, relative_path)
     )''');
     final baselineColumns = db
@@ -76,6 +78,18 @@ final class SqliteStateStore {
     }
     if (!baselineColumns.contains('comparison_sha256')) {
       db.execute('ALTER TABLE baseline ADD COLUMN comparison_sha256 TEXT');
+    }
+    if (!baselineColumns.contains('local_size')) {
+      db.execute('ALTER TABLE baseline ADD COLUMN local_size INTEGER');
+    }
+    final checkpointColumns = db
+        .select('PRAGMA table_info(scan_checkpoint)')
+        .map((row) => row['name'] as String)
+        .toSet();
+    if (!checkpointColumns.contains('comparison_sha256')) {
+      db.execute(
+        'ALTER TABLE scan_checkpoint ADD COLUMN comparison_sha256 TEXT',
+      );
     }
     _database = db;
   }
@@ -139,6 +153,8 @@ final class SqliteStateStore {
         ...expected[name]!,
         if (name == 'baseline') 'remote_sha256',
         if (name == 'baseline') 'comparison_sha256',
+        if (name == 'baseline') 'local_size',
+        if (name == 'scan_checkpoint') 'comparison_sha256',
       };
       if (!columns.containsAll(expected[name]!) ||
           !allowed.containsAll(columns)) {
@@ -256,7 +272,7 @@ final class SqliteStateStore {
   Map<SyncPath, BaselineEntry> loadBaseline() {
     final result = <SyncPath, BaselineEntry>{};
     for (final row in _db.select(
-      'SELECT relative_path,sha256,local_modified_ms,remote_etag,remote_size,remote_sha256,comparison_sha256 FROM baseline',
+      'SELECT relative_path,sha256,local_modified_ms,remote_etag,remote_size,remote_sha256,comparison_sha256,local_size FROM baseline',
     )) {
       final path = SyncPath.parse(row['relative_path'] as String);
       result[path] = BaselineEntry(
@@ -265,6 +281,7 @@ final class SqliteStateStore {
         localModifiedMs: row['local_modified_ms'] as int,
         remoteEtag: row['remote_etag'] as String?,
         remoteSize: row['remote_size'] as int,
+        localSize: row['local_size'] as int?,
         remoteSha256: row['remote_sha256'] as String?,
         comparisonHash: row['comparison_sha256'] as String?,
       );
@@ -419,10 +436,10 @@ final class SqliteStateStore {
         );
       } else {
         _db.execute(
-          '''INSERT INTO baseline(relative_path,sha256,local_modified_ms,remote_etag,remote_size,remote_sha256,comparison_sha256)
-          VALUES(?,?,?,?,?,?,?) ON CONFLICT(relative_path) DO UPDATE SET
+          '''INSERT INTO baseline(relative_path,sha256,local_modified_ms,remote_etag,remote_size,remote_sha256,comparison_sha256,local_size)
+          VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(relative_path) DO UPDATE SET
           sha256=excluded.sha256,local_modified_ms=excluded.local_modified_ms,
-          remote_etag=excluded.remote_etag,remote_size=excluded.remote_size,remote_sha256=excluded.remote_sha256,comparison_sha256=excluded.comparison_sha256''',
+          remote_etag=excluded.remote_etag,remote_size=excluded.remote_size,remote_sha256=excluded.remote_sha256,comparison_sha256=excluded.comparison_sha256,local_size=excluded.local_size''',
           <Object?>[
             entry.path.value,
             entry.sha256,
@@ -431,6 +448,7 @@ final class SqliteStateStore {
             entry.remoteSize,
             entry.remoteSha256,
             entry.comparisonHash,
+            entry.localSize,
           ],
         );
       }
@@ -449,10 +467,10 @@ final class SqliteStateStore {
     _db.execute('BEGIN IMMEDIATE');
     try {
       _db.execute(
-        '''INSERT INTO baseline(relative_path,sha256,local_modified_ms,remote_etag,remote_size,remote_sha256,comparison_sha256)
-      VALUES(?,?,?,?,?,?,?) ON CONFLICT(relative_path) DO UPDATE SET
+        '''INSERT INTO baseline(relative_path,sha256,local_modified_ms,remote_etag,remote_size,remote_sha256,comparison_sha256,local_size)
+      VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(relative_path) DO UPDATE SET
       sha256=excluded.sha256,local_modified_ms=excluded.local_modified_ms,
-      remote_etag=excluded.remote_etag,remote_size=excluded.remote_size,remote_sha256=excluded.remote_sha256,comparison_sha256=excluded.comparison_sha256''',
+      remote_etag=excluded.remote_etag,remote_size=excluded.remote_size,remote_sha256=excluded.remote_sha256,comparison_sha256=excluded.comparison_sha256,local_size=excluded.local_size''',
         <Object?>[
           entry.path.value,
           entry.sha256,
@@ -461,6 +479,7 @@ final class SqliteStateStore {
           entry.remoteSize,
           entry.remoteSha256,
           entry.comparisonHash,
+          entry.localSize,
         ],
       );
       _db.execute('COMMIT');
@@ -503,6 +522,7 @@ typedef _CheckpointRow = ({
   int size,
   int modifiedMs,
   String? etag,
+  String? comparisonHash,
 });
 
 final class _SqliteScanCheckpoint implements ScanCheckpoint {
@@ -522,7 +542,7 @@ final class _SqliteScanCheckpoint implements ScanCheckpoint {
   ) {
     return <String, _CheckpointRow>{
       for (final row in store._db.select(
-        'SELECT relative_path,sha256,size,modified_ms,etag FROM scan_checkpoint WHERE side=?',
+        'SELECT relative_path,sha256,size,modified_ms,etag,comparison_sha256 FROM scan_checkpoint WHERE side=?',
         <Object?>[side],
       ))
         row['relative_path'] as String: (
@@ -530,6 +550,7 @@ final class _SqliteScanCheckpoint implements ScanCheckpoint {
           size: row['size'] as int,
           modifiedMs: row['modified_ms'] as int,
           etag: row['etag'] as String?,
+          comparisonHash: row['comparison_sha256'] as String?,
         ),
     };
   }
@@ -539,6 +560,14 @@ final class _SqliteScanCheckpoint implements ScanCheckpoint {
     SyncPath path, {
     required int size,
     required int modifiedMs,
+  }) => localFile(path, size: size, modifiedMs: modifiedMs)?.sha256;
+
+  @override
+  ({String sha256, String? comparisonHash})? localFile(
+    SyncPath path, {
+    required int size,
+    required int modifiedMs,
+    bool requireComparisonHash = false,
   }) {
     // Without a real modification time, size alone cannot identify content.
     if (size < 0 || modifiedMs <= 0) return null;
@@ -546,7 +575,13 @@ final class _SqliteScanCheckpoint implements ScanCheckpoint {
     if (row == null || row.size != size || row.modifiedMs != modifiedMs) {
       return null;
     }
-    return _sha256.hasMatch(row.sha256) ? row.sha256 : null;
+    if (!_sha256.hasMatch(row.sha256)) return null;
+    if (requireComparisonHash &&
+        (row.comparisonHash == null ||
+            !_sha256.hasMatch(row.comparisonHash!))) {
+      return null;
+    }
+    return (sha256: row.sha256, comparisonHash: row.comparisonHash);
   }
 
   @override
@@ -568,9 +603,10 @@ final class _SqliteScanCheckpoint implements ScanCheckpoint {
     required String sha256,
     required int size,
     required int modifiedMs,
+    String? comparisonHash,
   }) {
     if (size < 0 || modifiedMs <= 0) return;
-    _write('local', path, sha256, size, modifiedMs, null);
+    _write('local', path, sha256, size, modifiedMs, null, comparisonHash);
   }
 
   @override
@@ -580,7 +616,7 @@ final class _SqliteScanCheckpoint implements ScanCheckpoint {
     required int size,
     required String etag,
   }) {
-    _write('remote', path, sha256, size, 0, etag);
+    _write('remote', path, sha256, size, 0, etag, null);
   }
 
   void _write(
@@ -590,14 +626,27 @@ final class _SqliteScanCheckpoint implements ScanCheckpoint {
     int size,
     int modifiedMs,
     String? etag,
+    String? comparisonHash,
   ) {
     if (!_sha256.hasMatch(sha256)) return;
+    if (comparisonHash != null && !_sha256.hasMatch(comparisonHash)) {
+      comparisonHash = null;
+    }
     _store._db.execute(
-      '''INSERT INTO scan_checkpoint(side,relative_path,sha256,size,modified_ms,etag)
-      VALUES(?,?,?,?,?,?) ON CONFLICT(side,relative_path) DO UPDATE SET
+      '''INSERT INTO scan_checkpoint(side,relative_path,sha256,size,modified_ms,etag,comparison_sha256)
+      VALUES(?,?,?,?,?,?,?) ON CONFLICT(side,relative_path) DO UPDATE SET
       sha256=excluded.sha256,size=excluded.size,
-      modified_ms=excluded.modified_ms,etag=excluded.etag''',
-      <Object?>[side, path.value, sha256, size, modifiedMs, etag],
+      modified_ms=excluded.modified_ms,etag=excluded.etag,
+      comparison_sha256=excluded.comparison_sha256''',
+      <Object?>[
+        side,
+        path.value,
+        sha256,
+        size,
+        modifiedMs,
+        etag,
+        comparisonHash,
+      ],
     );
   }
 }

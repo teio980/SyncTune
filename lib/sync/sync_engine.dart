@@ -203,6 +203,7 @@ final class SyncEngine {
         onBytes: scanByte,
         onFile: scanFile,
         checkpoint: checkpoint,
+        baseline: baseline,
       );
       cancellation.throwIfCancelled();
       await webDav.ensureRoot(settings, cancellation);
@@ -504,33 +505,37 @@ final class SyncEngine {
         remote != null &&
         local.comparisonHash != null &&
         local.comparisonHash == remote.comparisonHash) {
-      stateStore.saveUnchangedBaseline(
-        BaselineEntry(
-          path: desired.path,
-          sha256: local.sha256,
-          remoteSha256: remote.sha256,
-          comparisonHash: local.comparisonHash,
-          localModifiedMs: local.modifiedMs,
-          remoteEtag: remote.etag,
-          remoteSize: remote.size,
-        ),
+      final next = BaselineEntry(
+        path: desired.path,
+        sha256: local.sha256,
+        remoteSha256: remote.sha256,
+        comparisonHash: local.comparisonHash,
+        localSize: local.size,
+        localModifiedMs: local.modifiedMs,
+        remoteEtag: remote.etag,
+        remoteSize: remote.size,
       );
+      if (!_sameBaseline(baseline[desired.path], next)) {
+        stateStore.saveUnchangedBaseline(next);
+      }
       return;
     }
     if (desired.sha256 != null &&
         localHash == desired.sha256 &&
         remoteHash == desired.sha256) {
       final modified = local?.modifiedMs ?? 0;
-      stateStore.saveUnchangedBaseline(
-        BaselineEntry(
-          path: desired.path,
-          sha256: desired.sha256!,
-          comparisonHash: local?.comparisonHash,
-          localModifiedMs: modified,
-          remoteEtag: remote?.etag,
-          remoteSize: remote?.size ?? desired.size,
-        ),
+      final next = BaselineEntry(
+        path: desired.path,
+        sha256: desired.sha256!,
+        comparisonHash: local?.comparisonHash,
+        localSize: local?.size ?? desired.size,
+        localModifiedMs: modified,
+        remoteEtag: remote?.etag,
+        remoteSize: remote?.size ?? desired.size,
       );
+      if (!_sameBaseline(baseline[desired.path], next)) {
+        stateStore.saveUnchangedBaseline(next);
+      }
       return;
     }
     if (desired.sha256 == null && localHash == null && remoteHash == null) {
@@ -817,6 +822,7 @@ final class SyncEngine {
           : BaselineEntry(
               path: operation.path,
               sha256: expected,
+              localSize: operation.expectedSize,
               localModifiedMs: modified,
               remoteEtag: finalRemote?.etag,
               remoteSize: finalRemote?.size ?? operation.expectedSize,
@@ -1030,15 +1036,21 @@ final class SyncEngine {
           path: path,
         );
       }
-      if (local[path]?.comparisonHash != null &&
-          local[path]?.comparisonHash == remote[path]?.comparisonHash &&
-          saved!.comparisonHash != local[path]!.comparisonHash) {
+      final verifiedComparison =
+          local[path]?.comparisonHash != null &&
+              local[path]?.comparisonHash == remote[path]?.comparisonHash
+          ? local[path]!.comparisonHash
+          : saved!.comparisonHash;
+      final verifiedLocalSize = local[path]!.size;
+      if (saved!.comparisonHash != verifiedComparison ||
+          saved.localSize != verifiedLocalSize) {
         stateStore.saveUnchangedBaseline(
           BaselineEntry(
             path: path,
             sha256: saved.sha256,
             remoteSha256: saved.remoteSha256,
-            comparisonHash: local[path]!.comparisonHash,
+            comparisonHash: verifiedComparison,
+            localSize: verifiedLocalSize,
             localModifiedMs: saved.localModifiedMs,
             remoteEtag: saved.remoteEtag,
             remoteSize: saved.remoteSize,
@@ -1121,6 +1133,17 @@ final class SyncEngine {
       stateStore.markNeedsRescan(operation.id);
     }
   }
+
+  bool _sameBaseline(BaselineEntry? existing, BaselineEntry next) =>
+      existing != null &&
+      existing.path == next.path &&
+      existing.sha256 == next.sha256 &&
+      existing.remoteSha256 == next.remoteSha256 &&
+      existing.comparisonHash == next.comparisonHash &&
+      existing.localSize == next.localSize &&
+      existing.localModifiedMs == next.localModifiedMs &&
+      existing.remoteEtag == next.remoteEtag &&
+      existing.remoteSize == next.remoteSize;
 
   String _remoteBackupPath(Directory directory, String id) =>
       '${directory.path}${Platform.pathSeparator}$id.backup';
