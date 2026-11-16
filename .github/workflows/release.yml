@@ -128,12 +128,17 @@ jobs:
 
             - **Android:** `SyncTune-Android-release.apk`
             - **Windows (x64):** `SyncTune-windows-x64.zip`
-            - **macOS (Universal):** `SyncTune-macos-universal.zip`
+            - **macOS (Universal, Apple Silicon + Intel):** `SyncTune-macos-universal.zip`
+            - **Checksums:** `SHA256SUMS.txt`
 
             ## Changes
 
-            - **FLAC Vorbis Comment Equivalence**: Normalize Vorbis comment field name casing and field ordering, treating metadata-reordered FLAC files as equivalent to prevent false conflict copies.
-            - **WebDAV Baseline Fast Reuse**: Unmodified FLAC files now directly reuse local baseline metadata, eliminating redundant multi-hundred-megabyte remote re-downloads and timeout issues.
-            - **Multi-Platform Baseline Persistence**: Persist audio equivalence hashes in local SQLite baseline database to guarantee instant scans across Android, macOS, and Windows.
+            - **Local Baseline Fingerprint Reuse**: Persist `local_size` alongside `local_modified_ms` and FLAC `comparison_sha256` in SQLite so subsequent sync scans skip re-reading unchanged MP3 and FLAC files on desktop and Android SAF.
+            - **FLAC Scan Checkpointing**: Store and reuse FLAC comparison hashes in `scan_checkpoint` across resumed scans.
+            - **Reduced SQLite Write Overhead**: Skip redundant baseline writes when a file's baseline entry is completely unchanged.
+
+            ## Notes
+
+            - **macOS**: Distributed as an ad-hoc signed universal bundle. If Gatekeeper blocks first launch, allow it in **System Settings → Privacy & Security** or run `xattr -cr SyncTune.app`.
           draft: false
           prerelease: false
